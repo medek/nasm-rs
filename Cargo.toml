@@ -1,11 +1,10 @@
 [package]
-authors = ["Allen Goodman <allen@goodman.io>"]
+authors = ["Allen Goodman <allen@goodman.io>", "Gavin Massey <mdk@mystacktrace.org>"]
 description = "Run NASM during your Cargo build."
-homepage = "https://github.com/goodmanio/nasm"
+homepage = "https://github.com/medek/nasm-rs"
 keywords = ["assembler", "assembly", "build-dependencies", "cargo", "nasm"]
-license = "MIT"
 license-file = "LICENSE"
 name = "nasm"
 readme = "README.markdown"
-repository = "https://github.com/goodmanio/nasm.git"
-version = "0.0.1"
+repository = "https://github.com/medek/nasm-rs"
+version = "0.0.2"
