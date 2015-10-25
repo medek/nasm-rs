@@ -1,0 +1,11 @@
+[package]
+authors = ["Allen Goodman <allen@goodman.io>"]
+description = "Run NASM during your Cargo build."
+homepage = "https://github.com/goodmanio/nasm"
+keywords = ["assembler", "assembly", "build-dependencies", "cargo", "nasm"]
+license = "MIT"
+license-file = "LICENSE"
+name = "nasm"
+readme = "README.markdown"
+repository = "https://github.com/goodmanio/nasm.git"
+version = "0.0.1"
