@@ -6,7 +6,7 @@ use std::path::Path;
 fn x86_triple(os: &str) -> &'static str {
     match os {
         "linux" => "-felf32",
-        "macos" => "-fmachos32",
+        "darwin" => "-fmachos32",
         "windows" => "-fwin32",
         _ => ""
     }
@@ -15,7 +15,7 @@ fn x86_triple(os: &str) -> &'static str {
 fn x86_64_triple(os: &str) -> &'static str {
     match os {
         "linux" => "-felf64",
-        "macos" => "-felf64",
+        "darwin" => "-felf64",
         "windows" => "-fwin64",
         _ => ""
     }
