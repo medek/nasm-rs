@@ -42,7 +42,7 @@ fn parse_triple(trip: &str) -> &'static str {
 /// ```no_run
 /// nasm::compile_library("libfoo.a", &["foo.s", "bar.s"]);
 /// ```
-pub fn compile_library(output: &str, files: &[&str]) {
+pub fn compile_library(output: &str, files: &[&str], mut args: Vec<&str>) {
     assert!(output.starts_with("lib"));
 
     assert!(output.ends_with(".a"));
@@ -51,7 +51,7 @@ pub fn compile_library(output: &str, files: &[&str]) {
 
     let cargo_manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let out_dir = env::var("OUT_DIR").unwrap();
-    let mut args:Vec<&str> = Vec::new();
+
     args.push(parse_triple(&target));
 
     if env::var_os("DEBUG").is_some() {
