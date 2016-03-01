@@ -42,7 +42,7 @@ fn parse_triple(trip: &str) -> &'static str {
 /// ```no_run
 /// nasm::compile_library("libfoo.a", &["foo.s", "bar.s"]);
 /// ```
-pub fn compile_library(output: &str, files: &[&str], mut args: Vec<&str>) {
+pub fn compile_library(output: &str, files: &[&str], args: Vec<&str>) {
     assert!(output.starts_with("lib"));
 
     assert!(output.ends_with(".a"));
@@ -52,11 +52,14 @@ pub fn compile_library(output: &str, files: &[&str], mut args: Vec<&str>) {
     let cargo_manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let out_dir = env::var("OUT_DIR").unwrap();
 
-    args.push(parse_triple(&target));
+    let mut new_args: Vec<&str> = vec![];
+    new_args.push(parse_triple(&target));
 
     if env::var_os("DEBUG").is_some() {
-        args.push("-g");
+        new_args.push("-g");
     }
+
+    new_args.extend(args);
 
     let src = Path::new(&cargo_manifest_dir);
 
@@ -67,7 +70,7 @@ pub fn compile_library(output: &str, files: &[&str], mut args: Vec<&str>) {
     for file in files.iter() {
         let obj = dst.join(*file).with_extension("o");
         let mut cmd = Command::new("nasm");
-        cmd.args(&args[..]);
+        cmd.args(&new_args[..]);
         std::fs::create_dir_all(&obj.parent().unwrap()).unwrap();
 
         run(cmd.arg(src.join(*file)).arg("-o").arg(&obj));
