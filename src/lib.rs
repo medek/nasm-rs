@@ -40,9 +40,18 @@ fn parse_triple(trip: &str) -> &'static str {
 /// # Example
 ///
 /// ```no_run
-/// nasm::compile_library("libfoo.a", &["foo.s", "bar.s"]);
+/// nasm_rs::compile_library("libfoo.a", &["foo.s", "bar.s"]);
 /// ```
-pub fn compile_library(output: &str, files: &[&str], args: Vec<&str>) {
+pub fn compile_library(output: &str, files: &[&str]) {
+    compile_library_args(output, files, &[])
+}
+
+/// # Example
+///
+/// ```no_run
+/// nasm_rs::compile_library_args("libfoo.a", &["foo.s", "bar.s"], &["-Fdwarf"]);
+/// ```
+pub fn compile_library_args(output: &str, files: &[&str], args: &[&str]) {
     assert!(output.starts_with("lib"));
 
     assert!(output.ends_with(".a"));
