@@ -3,10 +3,10 @@
 Run NASM during your Cargo build.
 
 ```rust
-extern crate nasm;
+extern crate nasm_rs;
 
 fn main() {
-    nasm::compile_library("libfoo.a", &["foo.s", "bar.s"]);
+    nasm_rs::compile_library("libfoo.a", &["foo.s", "bar.s"]);
 }
 ```
 
