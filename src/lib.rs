@@ -40,9 +40,18 @@ fn parse_triple(trip: &str) -> &'static str {
 /// # Example
 ///
 /// ```no_run
-/// nasm::compile_library("libfoo.a", &["foo.s", "bar.s"]);
+/// nasm_rs::compile_library("libfoo.a", &["foo.s", "bar.s"]);
 /// ```
 pub fn compile_library(output: &str, files: &[&str]) {
+    compile_library_args(output, files, &[])
+}
+
+/// # Example
+///
+/// ```no_run
+/// nasm_rs::compile_library_args("libfoo.a", &["foo.s", "bar.s"], &["-Fdwarf"]);
+/// ```
+pub fn compile_library_args(output: &str, files: &[&str], args: &[&str]) {
     assert!(output.starts_with("lib"));
 
     assert!(output.ends_with(".a"));
@@ -51,12 +60,15 @@ pub fn compile_library(output: &str, files: &[&str]) {
 
     let cargo_manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let out_dir = env::var("OUT_DIR").unwrap();
-    let mut args:Vec<&str> = Vec::new();
-    args.push(parse_triple(&target));
+
+    let mut new_args: Vec<&str> = vec![];
+    new_args.push(parse_triple(&target));
 
     if env::var_os("DEBUG").is_some() {
-        args.push("-g");
+        new_args.push("-g");
     }
+
+    new_args.extend(args);
 
     let src = Path::new(&cargo_manifest_dir);
 
@@ -67,7 +79,7 @@ pub fn compile_library(output: &str, files: &[&str]) {
     for file in files.iter() {
         let obj = dst.join(*file).with_extension("o");
         let mut cmd = Command::new("nasm");
-        cmd.args(&args[..]);
+        cmd.args(&new_args[..]);
         std::fs::create_dir_all(&obj.parent().unwrap()).unwrap();
 
         run(cmd.arg(src.join(*file)).arg("-o").arg(&obj));
@@ -76,9 +88,8 @@ pub fn compile_library(output: &str, files: &[&str]) {
 
     run(Command::new(ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
 
-    println!("cargo:rustc-flags=-L {} -l {}:static",
-             dst.display(),
-             &output[3..output.len() - 2]);
+    println!("cargo:rustc-flags=-L {}",
+             dst.display());
 }
 
 fn run(cmd: &mut Command) {
