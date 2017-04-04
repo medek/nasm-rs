@@ -32,7 +32,7 @@ fn parse_triple(trip: &str) -> &'static str {
 
     match parts[0] {
         "x86_64" => x86_64_triple(&parts[2]),
-        "x86" => x86_triple(&parts[2]),
+        "x86" | "i386" | "i586" | "i686" => x86_triple(&parts[2]),
         _ => ""
     }
 }
