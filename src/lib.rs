@@ -32,7 +32,7 @@ fn parse_triple(trip: &str) -> &'static str {
 
     match parts[0] {
         "x86_64" => x86_64_triple(&parts[2]),
-        "x86" => x86_triple(&parts[2]),
+        "x86" | "i386" | "i586" | "i686" => x86_triple(&parts[2]),
         _ => ""
     }
 }
@@ -52,9 +52,14 @@ pub fn compile_library(output: &str, files: &[&str]) {
 /// nasm_rs::compile_library_args("libfoo.a", &["foo.s", "bar.s"], &["-Fdwarf"]);
 /// ```
 pub fn compile_library_args(output: &str, files: &[&str], args: &[&str]) {
+    #[cfg(not(target_env = "msvc"))]
     assert!(output.starts_with("lib"));
 
+    #[cfg(not(target_env = "msvc"))]
     assert!(output.ends_with(".a"));
+
+    #[cfg(target_env = "msvc")]
+    assert!(output.ends_with(".lib"));
 
     let target = env::var("TARGET").unwrap();
 
