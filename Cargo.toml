@@ -8,3 +8,10 @@ name = "nasm-rs"
 readme = "README.markdown"
 repository = "https://github.com/medek/nasm-rs"
 version = "0.0.7"
+
+[dependencies.rayon]
+optional = true
+version = "0.8.2"
+
+[features]
+parallel = ["rayon"]

@@ -1,3 +1,8 @@
+#[cfg(feature = "parallel")]
+extern crate rayon;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 use std::env;
 use std::process::Command;
 use std::process::Stdio;
@@ -79,17 +84,24 @@ pub fn compile_library_args(output: &str, files: &[&str], args: &[&str]) {
 
     let dst = Path::new(&out_dir);
 
-    let mut objects = Vec::new();
-
-    for file in files.iter() {
-        let obj = compile_file(file, &new_args, src, dst);
-        objects.push(obj);
-    }
+    let objects = make_iter(files).map(|file| {
+        compile_file(file, &new_args, src, dst)
+    }).collect::<Vec<_>>();
 
     run(Command::new(ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
 
     println!("cargo:rustc-flags=-L {}",
              dst.display());
+}
+
+#[cfg(feature = "parallel")]
+fn make_iter<'a, 'b>(files: &'a [&'b str]) -> rayon::slice::Iter<'a, &'b str> {
+    files.par_iter()
+}
+
+#[cfg(not(feature = "parallel"))]
+fn make_iter<'a, 'b>(files: &'a [&'b str]) -> std::slice::Iter<'a, &'b str> {
+    files.iter()
 }
 
 fn compile_file(file: &str, new_args: &[&str], src: &Path, dst: &Path) -> PathBuf {
