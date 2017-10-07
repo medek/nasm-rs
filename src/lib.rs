@@ -1,7 +1,12 @@
+#[cfg(feature = "parallel")]
+extern crate rayon;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 use std::env;
 use std::process::Command;
 use std::process::Stdio;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn x86_triple(os: &str) -> &'static str {
     match os {
@@ -22,7 +27,7 @@ fn x86_64_triple(os: &str) -> &'static str {
 }
 
 fn parse_triple(trip: &str) -> &'static str {
-    let parts = trip.split("-").collect::<Vec<&str>>();
+    let parts = trip.split('-').collect::<Vec<_>>();
     // ARCH-VENDOR-OS-ENVIRONMENT
     // or ARCH-VENDOR-OS
     // we don't care about environ so doesn't matter if triple doesn't have it
@@ -31,8 +36,8 @@ fn parse_triple(trip: &str) -> &'static str {
     }
 
     match parts[0] {
-        "x86_64" => x86_64_triple(&parts[2]),
-        "x86" | "i386" | "i586" | "i686" => x86_triple(&parts[2]),
+        "x86_64" => x86_64_triple(parts[2]),
+        "x86" | "i386" | "i586" | "i686" => x86_triple(parts[2]),
         _ => ""
     }
 }
@@ -79,22 +84,34 @@ pub fn compile_library_args(output: &str, files: &[&str], args: &[&str]) {
 
     let dst = Path::new(&out_dir);
 
-    let mut objects = Vec::new();
-
-    for file in files.iter() {
-        let obj = dst.join(*file).with_extension("o");
-        let mut cmd = Command::new("nasm");
-        cmd.args(&new_args[..]);
-        std::fs::create_dir_all(&obj.parent().unwrap()).unwrap();
-
-        run(cmd.arg(src.join(*file)).arg("-o").arg(&obj));
-        objects.push(obj);
-    }
+    let objects = make_iter(files).map(|file| {
+        compile_file(file, &new_args, src, dst)
+    }).collect::<Vec<_>>();
 
     run(Command::new(ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
 
     println!("cargo:rustc-flags=-L {}",
              dst.display());
+}
+
+#[cfg(feature = "parallel")]
+fn make_iter<'a, 'b>(files: &'a [&'b str]) -> rayon::slice::Iter<'a, &'b str> {
+    files.par_iter()
+}
+
+#[cfg(not(feature = "parallel"))]
+fn make_iter<'a, 'b>(files: &'a [&'b str]) -> std::slice::Iter<'a, &'b str> {
+    files.iter()
+}
+
+fn compile_file(file: &str, new_args: &[&str], src: &Path, dst: &Path) -> PathBuf {
+    let obj = dst.join(file).with_extension("o");
+    let mut cmd = Command::new("nasm");
+    cmd.args(&new_args[..]);
+    std::fs::create_dir_all(&obj.parent().unwrap()).unwrap();
+
+    run(cmd.arg(src.join(file)).arg("-o").arg(&obj));
+    obj
 }
 
 fn run(cmd: &mut Command) {

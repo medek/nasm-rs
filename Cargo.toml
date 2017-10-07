@@ -7,4 +7,11 @@ license = "MIT OR Apache-2.0"
 name = "nasm-rs"
 readme = "README.markdown"
 repository = "https://github.com/medek/nasm-rs"
-version = "0.0.7"
+version = "0.1.0"
+
+[dependencies.rayon]
+optional = true
+version = "0.8.2"
+
+[features]
+parallel = ["rayon"]
