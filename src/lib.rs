@@ -48,7 +48,8 @@ fn parse_triple(trip: &str) -> &'static str {
 /// nasm_rs::compile_library("libfoo.a", &["foo.s", "bar.s"]);
 /// ```
 pub fn compile_library(output: &str, files: &[&str]) {
-    compile_library_args(output, files, &[])
+    let no_args: &[String] = &[];
+    compile_library_args(output, files, no_args);
 }
 
 /// # Example
@@ -56,7 +57,7 @@ pub fn compile_library(output: &str, files: &[&str]) {
 /// ```no_run
 /// nasm_rs::compile_library_args("libfoo.a", &["foo.s", "bar.s"], &["-Fdwarf"]);
 /// ```
-pub fn compile_library_args(output: &str, files: &[&str], args: &[&str]) {
+pub fn compile_library_args<P: AsRef<Path>, S: AsRef<str>>(output: &str, files: &[P], args: &[S]) {
     #[cfg(not(target_env = "msvc"))]
     assert!(output.starts_with("lib"));
 
@@ -78,14 +79,16 @@ pub fn compile_library_args(output: &str, files: &[&str], args: &[&str]) {
         new_args.push("-g");
     }
 
-    new_args.extend(args);
+    for arg in args {
+        new_args.push(arg.as_ref());
+    }
 
     let src = Path::new(&cargo_manifest_dir);
 
     let dst = Path::new(&out_dir);
 
     let objects = make_iter(files).map(|file| {
-        compile_file(file, &new_args, src, dst)
+        compile_file(file.as_ref(), &new_args, src, dst)
     }).collect::<Vec<_>>();
 
     run(Command::new(ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
@@ -95,16 +98,16 @@ pub fn compile_library_args(output: &str, files: &[&str], args: &[&str]) {
 }
 
 #[cfg(feature = "parallel")]
-fn make_iter<'a, 'b>(files: &'a [&'b str]) -> rayon::slice::Iter<'a, &'b str> {
+fn make_iter<'a, S: AsRef<Path>>(files: &'a [S]) -> rayon::slice::Iter<'a, S> {
     files.par_iter()
 }
 
 #[cfg(not(feature = "parallel"))]
-fn make_iter<'a, 'b>(files: &'a [&'b str]) -> std::slice::Iter<'a, &'b str> {
+fn make_iter<'a, S: AsRef<Path>>(files: &'a [S]) -> std::slice::Iter<'a, S> {
     files.iter()
 }
 
-fn compile_file(file: &str, new_args: &[&str], src: &Path, dst: &Path) -> PathBuf {
+fn compile_file(file: &Path, new_args: &[&str], src: &Path, dst: &Path) -> PathBuf {
     let obj = dst.join(file).with_extension("o");
     let mut cmd = Command::new("nasm");
     cmd.args(&new_args[..]);
