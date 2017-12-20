@@ -48,8 +48,23 @@ fn parse_triple(trip: &str) -> &'static str {
 /// nasm_rs::compile_library("libfoo.a", &["foo.s", "bar.s"]);
 /// ```
 pub fn compile_library(output: &str, files: &[&str]) {
-    let no_args: &[String] = &[];
-    compile_library_args(output, files, no_args);
+    compile_library_args(output, files, &[]);
+}
+
+/// # Example
+///
+/// ```no_run
+/// nasm_rs::compile_library_args("libfoo.a", &["foo.s", "bar.s"], &["-Fdwarf"]);
+/// ```
+pub fn compile_library_args<P: AsRef<Path>>(output: &str, files: &[P], args: &[&str]) {
+    let mut b = Build::new();
+    for file in files {
+        b.file(file);
+    }
+    for arg in args {
+        b.flag(arg);
+    }
+    b.compile(output);
 }
 
 pub struct Build {
@@ -76,54 +91,46 @@ impl Build {
     }
 
     pub fn compile(&mut self, output: &str) {
-        compile_library_args(output, &self.files, &self.flags);
+        #[cfg(not(target_env = "msvc"))]
+        assert!(output.starts_with("lib"));
+
+        #[cfg(not(target_env = "msvc"))]
+        assert!(output.ends_with(".a"));
+
+        #[cfg(target_env = "msvc")]
+        assert!(output.ends_with(".lib"));
+
+        let target = env::var("TARGET").unwrap();
+
+        let cargo_manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+        let out_dir = env::var("OUT_DIR").unwrap();
+
+        let mut new_args: Vec<&str> = vec![];
+        new_args.push(parse_triple(&target));
+
+        if env::var_os("DEBUG").is_some() {
+            new_args.push("-g");
+        }
+
+        for arg in &self.flags {
+            new_args.push(arg);
+        }
+
+        let src = Path::new(&cargo_manifest_dir);
+
+        let dst = Path::new(&out_dir);
+
+        let objects = make_iter(&self.files).map(|file| {
+            compile_file(file.as_ref(), &new_args, src, dst)
+        }).collect::<Vec<_>>();
+
+        run(Command::new(ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
+
+        println!("cargo:rustc-flags=-L {}",
+                 dst.display());
     }
 }
 
-/// # Example
-///
-/// ```no_run
-/// nasm_rs::compile_library_args("libfoo.a", &["foo.s", "bar.s"], &["-Fdwarf"]);
-/// ```
-pub fn compile_library_args<P: AsRef<Path>, S: AsRef<str>>(output: &str, files: &[P], args: &[S]) {
-    #[cfg(not(target_env = "msvc"))]
-    assert!(output.starts_with("lib"));
-
-    #[cfg(not(target_env = "msvc"))]
-    assert!(output.ends_with(".a"));
-
-    #[cfg(target_env = "msvc")]
-    assert!(output.ends_with(".lib"));
-
-    let target = env::var("TARGET").unwrap();
-
-    let cargo_manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let out_dir = env::var("OUT_DIR").unwrap();
-
-    let mut new_args: Vec<&str> = vec![];
-    new_args.push(parse_triple(&target));
-
-    if env::var_os("DEBUG").is_some() {
-        new_args.push("-g");
-    }
-
-    for arg in args {
-        new_args.push(arg.as_ref());
-    }
-
-    let src = Path::new(&cargo_manifest_dir);
-
-    let dst = Path::new(&out_dir);
-
-    let objects = make_iter(files).map(|file| {
-        compile_file(file.as_ref(), &new_args, src, dst)
-    }).collect::<Vec<_>>();
-
-    run(Command::new(ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
-
-    println!("cargo:rustc-flags=-L {}",
-             dst.display());
-}
 
 #[cfg(feature = "parallel")]
 fn make_iter<'a, S: AsRef<Path>>(files: &'a [S]) -> rayon::slice::Iter<'a, S> {
