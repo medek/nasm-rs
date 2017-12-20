@@ -72,6 +72,7 @@ pub struct Build {
     flags: Vec<String>,
     target: Option<String>,
     archiver: Option<PathBuf>,
+    nasm: Option<PathBuf>,
     debug: bool,
 }
 
@@ -81,6 +82,7 @@ impl Build {
             files: Vec::new(),
             flags: Vec::new(),
             archiver: None,
+            nasm: None,
             target: None,
             debug: env::var("DEBUG").ok().map_or(false, |d| d != "false"),
         }
@@ -149,6 +151,12 @@ impl Build {
         self
     }
 
+    /// Configures path to `nasm` command
+    pub fn nasm<P: AsRef<Path>>(&mut self, nasm: P) -> &mut Self {
+        self.nasm = Some(nasm.as_ref().to_owned());
+        self
+    }
+
     /// Run the compiler, generating the file output
     ///
     /// The name output should be the name of the library
@@ -181,9 +189,10 @@ impl Build {
         let src = &PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
         let dst = &PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set"));
 
+        let nasm = self.nasm.as_ref().map(|n| n.as_path()).unwrap_or(Path::new("nasm"));
 
         let objects = self.make_iter().map(|file| {
-            self.compile_file(file.as_ref(), &new_args, src, dst)
+            self.compile_file(nasm, file.as_ref(), &new_args, src, dst)
         }).collect::<Vec<_>>();
 
         run(Command::new(self.ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
@@ -202,9 +211,9 @@ impl Build {
         self.files.iter()
     }
 
-    fn compile_file(&self, file: &Path, new_args: &[&str], src: &Path, dst: &Path) -> PathBuf {
+    fn compile_file(&self, nasm: &Path, file: &Path, new_args: &[&str], src: &Path, dst: &Path) -> PathBuf {
         let obj = dst.join(file).with_extension("o");
-        let mut cmd = Command::new("nasm");
+        let mut cmd = Command::new(nasm);
         cmd.args(&new_args[..]);
         std::fs::create_dir_all(&obj.parent().unwrap()).unwrap();
 
