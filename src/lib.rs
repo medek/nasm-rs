@@ -52,6 +52,34 @@ pub fn compile_library(output: &str, files: &[&str]) {
     compile_library_args(output, files, no_args);
 }
 
+pub struct Build {
+    files: Vec<PathBuf>,
+    flags: Vec<String>,
+}
+
+impl Build {
+    pub fn new() -> Self {
+        Self {
+            files: Vec::new(),
+            flags: Vec::new(),
+        }
+    }
+
+    pub fn file<P: AsRef<Path>>(&mut self, p: P) -> &mut Self {
+        self.files.push(p.as_ref().to_owned());
+        self
+    }
+
+    pub fn flag(&mut self, flag: &str) -> &mut Self {
+        self.flags.push(flag.to_owned());
+        self
+    }
+
+    pub fn compile(&mut self, output: &str) {
+        compile_library_args(output, &self.files, &self.flags);
+    }
+}
+
 /// # Example
 ///
 /// ```no_run
@@ -133,4 +161,12 @@ fn run(cmd: &mut Command) {
 
 fn ar() -> String {
     env::var("AR").unwrap_or("ar".to_string())
+}
+
+
+#[test]
+fn test_build() {
+    let mut build = Build::new();
+    build.file("test");
+    build.flag("-test");
 }
