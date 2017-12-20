@@ -48,7 +48,7 @@ fn parse_triple(trip: &str) -> &'static str {
 /// nasm_rs::compile_library("libfoo.a", &["foo.s", "bar.s"]);
 /// ```
 pub fn compile_library(output: &str, files: &[&str]) {
-    compile_library_args(output, files, &[])
+    compile_library_args(output, files, &[]);
 }
 
 /// # Example
@@ -56,62 +56,110 @@ pub fn compile_library(output: &str, files: &[&str]) {
 /// ```no_run
 /// nasm_rs::compile_library_args("libfoo.a", &["foo.s", "bar.s"], &["-Fdwarf"]);
 /// ```
-pub fn compile_library_args(output: &str, files: &[&str], args: &[&str]) {
-    #[cfg(not(target_env = "msvc"))]
-    assert!(output.starts_with("lib"));
+pub fn compile_library_args<P: AsRef<Path>>(output: &str, files: &[P], args: &[&str]) {
+    let mut b = Build::new();
+    for file in files {
+        b.file(file);
+    }
+    for arg in args {
+        b.flag(arg);
+    }
+    b.compile(output);
+}
 
-    #[cfg(not(target_env = "msvc"))]
-    assert!(output.ends_with(".a"));
+pub struct Build {
+    files: Vec<PathBuf>,
+    flags: Vec<String>,
+}
 
-    #[cfg(target_env = "msvc")]
-    assert!(output.ends_with(".lib"));
-
-    let target = env::var("TARGET").unwrap();
-
-    let cargo_manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let out_dir = env::var("OUT_DIR").unwrap();
-
-    let mut new_args: Vec<&str> = vec![];
-    new_args.push(parse_triple(&target));
-
-    if env::var_os("DEBUG").is_some() {
-        new_args.push("-g");
+impl Build {
+    pub fn new() -> Self {
+        Self {
+            files: Vec::new(),
+            flags: Vec::new(),
+        }
     }
 
-    new_args.extend(args);
+    /// Add a file which will be compiled
+    ///
+    /// e.g. `"foo.s"`
+    pub fn file<P: AsRef<Path>>(&mut self, p: P) -> &mut Self {
+        self.files.push(p.as_ref().to_owned());
+        self
+    }
 
-    let src = Path::new(&cargo_manifest_dir);
+    /// Add an arbitrary flag to the invocation of the assembler
+    ///
+    /// e.g. `"-Fdwarf"`
+    pub fn flag(&mut self, flag: &str) -> &mut Self {
+        self.flags.push(flag.to_owned());
+        self
+    }
 
-    let dst = Path::new(&out_dir);
+    /// Run the compiler, generating the file output
+    ///
+    /// The name output should be the name of the library
+    /// including platform-specific prefix and file extension,
+    /// e.g. `"libfoo.a"`
+    pub fn compile(&mut self, output: &str) {
+        #[cfg(not(target_env = "msvc"))]
+        assert!(output.starts_with("lib"));
 
-    let objects = make_iter(files).map(|file| {
-        compile_file(file, &new_args, src, dst)
-    }).collect::<Vec<_>>();
+        #[cfg(not(target_env = "msvc"))]
+        assert!(output.ends_with(".a"));
 
-    run(Command::new(ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
+        #[cfg(target_env = "msvc")]
+        assert!(output.ends_with(".lib"));
 
-    println!("cargo:rustc-flags=-L {}",
-             dst.display());
-}
+        let target = env::var("TARGET").unwrap();
 
-#[cfg(feature = "parallel")]
-fn make_iter<'a, 'b>(files: &'a [&'b str]) -> rayon::slice::Iter<'a, &'b str> {
-    files.par_iter()
-}
+        let cargo_manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+        let out_dir = env::var("OUT_DIR").unwrap();
 
-#[cfg(not(feature = "parallel"))]
-fn make_iter<'a, 'b>(files: &'a [&'b str]) -> std::slice::Iter<'a, &'b str> {
-    files.iter()
-}
+        let mut new_args: Vec<&str> = vec![];
+        new_args.push(parse_triple(&target));
 
-fn compile_file(file: &str, new_args: &[&str], src: &Path, dst: &Path) -> PathBuf {
-    let obj = dst.join(file).with_extension("o");
-    let mut cmd = Command::new("nasm");
-    cmd.args(&new_args[..]);
-    std::fs::create_dir_all(&obj.parent().unwrap()).unwrap();
+        if env::var_os("DEBUG").is_some() {
+            new_args.push("-g");
+        }
 
-    run(cmd.arg(src.join(file)).arg("-o").arg(&obj));
-    obj
+        for arg in &self.flags {
+            new_args.push(arg);
+        }
+
+        let src = Path::new(&cargo_manifest_dir);
+
+        let dst = Path::new(&out_dir);
+
+        let objects = self.make_iter().map(|file| {
+            self.compile_file(file.as_ref(), &new_args, src, dst)
+        }).collect::<Vec<_>>();
+
+        run(Command::new(ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
+
+        println!("cargo:rustc-flags=-L {}",
+                 dst.display());
+    }
+
+    #[cfg(feature = "parallel")]
+    fn make_iter(&self) -> rayon::slice::Iter<PathBuf> {
+        self.files.par_iter()
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    fn make_iter(&self) -> std::slice::Iter<PathBuf> {
+        self.files.iter()
+    }
+
+    fn compile_file(&self, file: &Path, new_args: &[&str], src: &Path, dst: &Path) -> PathBuf {
+        let obj = dst.join(file).with_extension("o");
+        let mut cmd = Command::new("nasm");
+        cmd.args(&new_args[..]);
+        std::fs::create_dir_all(&obj.parent().unwrap()).unwrap();
+
+        run(cmd.arg(src.join(file)).arg("-o").arg(&obj));
+        obj
+    }
 }
 
 fn run(cmd: &mut Command) {
@@ -130,4 +178,12 @@ fn run(cmd: &mut Command) {
 
 fn ar() -> String {
     env::var("AR").unwrap_or("ar".to_string())
+}
+
+
+#[test]
+fn test_build() {
+    let mut build = Build::new();
+    build.file("test");
+    build.flag("-test");
 }
