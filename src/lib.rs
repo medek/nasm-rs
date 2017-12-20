@@ -80,16 +80,27 @@ impl Build {
         }
     }
 
+    /// Add a file which will be compiled
+    ///
+    /// e.g. `"foo.s"`
     pub fn file<P: AsRef<Path>>(&mut self, p: P) -> &mut Self {
         self.files.push(p.as_ref().to_owned());
         self
     }
 
+    /// Add an arbitrary flag to the invocation of the assembler
+    ///
+    /// e.g. `"-Fdwarf"`
     pub fn flag(&mut self, flag: &str) -> &mut Self {
         self.flags.push(flag.to_owned());
         self
     }
 
+    /// Run the compiler, generating the file output
+    ///
+    /// The name output should be the name of the library
+    /// including platform-specific prefix and file extension,
+    /// e.g. `"libfoo.a"`
     pub fn compile(&mut self, output: &str) {
         #[cfg(not(target_env = "msvc"))]
         assert!(output.starts_with("lib"));
