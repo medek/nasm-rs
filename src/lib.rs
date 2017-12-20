@@ -120,8 +120,8 @@ impl Build {
 
         let dst = Path::new(&out_dir);
 
-        let objects = make_iter(&self.files).map(|file| {
-            compile_file(file.as_ref(), &new_args, src, dst)
+        let objects = self.make_iter().map(|file| {
+            self.compile_file(file.as_ref(), &new_args, src, dst)
         }).collect::<Vec<_>>();
 
         run(Command::new(ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
@@ -129,27 +129,26 @@ impl Build {
         println!("cargo:rustc-flags=-L {}",
                  dst.display());
     }
-}
 
+    #[cfg(feature = "parallel")]
+    fn make_iter(&self) -> rayon::slice::Iter<PathBuf> {
+        self.files.par_iter()
+    }
 
-#[cfg(feature = "parallel")]
-fn make_iter<'a, S: AsRef<Path>>(files: &'a [S]) -> rayon::slice::Iter<'a, S> {
-    files.par_iter()
-}
+    #[cfg(not(feature = "parallel"))]
+    fn make_iter(&self) -> std::slice::Iter<PathBuf> {
+        self.files.iter()
+    }
 
-#[cfg(not(feature = "parallel"))]
-fn make_iter<'a, S: AsRef<Path>>(files: &'a [S]) -> std::slice::Iter<'a, S> {
-    files.iter()
-}
+    fn compile_file(&self, file: &Path, new_args: &[&str], src: &Path, dst: &Path) -> PathBuf {
+        let obj = dst.join(file).with_extension("o");
+        let mut cmd = Command::new("nasm");
+        cmd.args(&new_args[..]);
+        std::fs::create_dir_all(&obj.parent().unwrap()).unwrap();
 
-fn compile_file(file: &Path, new_args: &[&str], src: &Path, dst: &Path) -> PathBuf {
-    let obj = dst.join(file).with_extension("o");
-    let mut cmd = Command::new("nasm");
-    cmd.args(&new_args[..]);
-    std::fs::create_dir_all(&obj.parent().unwrap()).unwrap();
-
-    run(cmd.arg(src.join(file)).arg("-o").arg(&obj));
-    obj
+        run(cmd.arg(src.join(file)).arg("-o").arg(&obj));
+        obj
+    }
 }
 
 fn run(cmd: &mut Command) {
