@@ -175,6 +175,8 @@ impl Build {
         let target = self.target.clone()
             .unwrap_or_else(|| env::var("TARGET").expect("TARGET must be set"));
 
+        let nasm = self.find_nasm();
+
         let mut new_args: Vec<&str> = vec![];
         new_args.push(parse_triple(&target));
 
@@ -189,10 +191,9 @@ impl Build {
         let src = &PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
         let dst = &PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set"));
 
-        let nasm = self.nasm.as_ref().map(|n| n.as_path()).unwrap_or(Path::new("nasm"));
 
         let objects = self.make_iter().map(|file| {
-            self.compile_file(nasm, file.as_ref(), &new_args, src, dst)
+            self.compile_file(&nasm, file.as_ref(), &new_args, src, dst)
         }).collect::<Vec<_>>();
 
         run(Command::new(self.ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
@@ -225,6 +226,45 @@ impl Build {
         self.archiver.clone()
             .or_else(|| env::var_os("AR").map(|a| a.into()))
             .unwrap_or_else(|| "ar".into())
+    }
+
+    fn find_nasm(&mut self) -> PathBuf {
+        match self.nasm.clone() {
+            Some(path) => path,
+            None => {
+                let nasm_path = PathBuf::from("nasm");
+                match is_nasm_new_enough(&nasm_path) {
+                    Ok(_) => nasm_path,
+                    Err(version) => {
+                        panic!("This version of NASM is too old: {}", version);
+                    },
+                }
+            },
+        }
+    }
+}
+
+fn get_output(cmd: &mut Command) -> Result<String, String> {
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr))?
+    }
+}
+
+/// Returns version string if nasm is too old,
+/// or error message string if it's unusable.
+fn is_nasm_new_enough(nasm_path: &Path) -> Result<(), String> {
+    match get_output(Command::new(nasm_path).arg("-v")) {
+        Ok(version) => {
+            if version.contains("NASM version 0.") {
+                Err(version)?
+            } else {
+                Ok(())
+            }
+        },
+        Err(err) => Err(err)?,
     }
 }
 
