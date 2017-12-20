@@ -70,6 +70,7 @@ pub fn compile_library_args<P: AsRef<Path>>(output: &str, files: &[P], args: &[&
 pub struct Build {
     files: Vec<PathBuf>,
     flags: Vec<String>,
+    debug: bool,
 }
 
 impl Build {
@@ -77,6 +78,7 @@ impl Build {
         Self {
             files: Vec::new(),
             flags: Vec::new(),
+            debug: env::var("DEBUG").ok().map_or(false, |d| d != "false"),
         }
     }
 
@@ -85,6 +87,34 @@ impl Build {
     /// e.g. `"foo.s"`
     pub fn file<P: AsRef<Path>>(&mut self, p: P) -> &mut Self {
         self.files.push(p.as_ref().to_owned());
+        self
+    }
+
+    /// Add a directory to the `-I` include path
+    pub fn include<P: AsRef<Path>>(&mut self, dir: P) -> &mut Self {
+        self.flags.push(format!("-I{}", dir.as_ref().display()));
+        self
+    }
+
+    /// Pre-define a macro with an optional value
+    pub fn define<'a, V: Into<Option<&'a str>>>(&mut self, var: &str, val: V) -> &mut Self {
+        let val = val.into();
+        let flag = if let Some(val) = val {
+            format!("{}={}", var, val)
+        } else {
+            var.to_owned()
+        };
+        self.flags.push(flag);
+        self
+    }
+
+    /// Configures whether the assembler will generate debug information.
+    ///
+    /// This option is automatically scraped from the `DEBUG` environment
+    /// variable by build scripts (only enabled when the profile is "debug"), so
+    /// it's not required to call this function.
+    pub fn debug(&mut self, enable: bool) -> &mut Self {
+        self.debug = enable;
         self
     }
 
@@ -119,7 +149,7 @@ impl Build {
         let mut new_args: Vec<&str> = vec![];
         new_args.push(parse_triple(&target));
 
-        if env::var_os("DEBUG").is_some() {
+        if self.debug {
             new_args.push("-g");
         }
 
