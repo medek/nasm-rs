@@ -70,6 +70,8 @@ pub fn compile_library_args<P: AsRef<Path>>(output: &str, files: &[P], args: &[&
 pub struct Build {
     files: Vec<PathBuf>,
     flags: Vec<String>,
+    target: Option<String>,
+    archiver: Option<PathBuf>,
     debug: bool,
 }
 
@@ -78,6 +80,8 @@ impl Build {
         Self {
             files: Vec::new(),
             flags: Vec::new(),
+            archiver: None,
+            target: None,
             debug: env::var("DEBUG").ok().map_or(false, |d| d != "false"),
         }
     }
@@ -126,6 +130,25 @@ impl Build {
         self
     }
 
+    /// Configures the target this configuration will be compiling for.
+    ///
+    /// This option is automatically scraped from the `TARGET` environment
+    /// variable by build scripts, so it's not required to call this function.
+    pub fn target(&mut self, target: &str) -> &mut Self {
+        self.target = Some(target.to_owned());
+        self
+    }
+
+    /// Configures the tool used to assemble archives.
+    ///
+    /// This option is automatically determined from the target platform or a
+    /// number of environment variables, so it's not required to call this
+    /// function.
+    pub fn archiver<P: AsRef<Path>>(&mut self, archiver: P) -> &mut Self {
+        self.archiver = Some(archiver.as_ref().to_owned());
+        self
+    }
+
     /// Run the compiler, generating the file output
     ///
     /// The name output should be the name of the library
@@ -141,10 +164,8 @@ impl Build {
         #[cfg(target_env = "msvc")]
         assert!(output.ends_with(".lib"));
 
-        let target = env::var("TARGET").unwrap();
-
-        let cargo_manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-        let out_dir = env::var("OUT_DIR").unwrap();
+        let target = self.target.clone()
+            .unwrap_or_else(|| env::var("TARGET").expect("TARGET must be set"));
 
         let mut new_args: Vec<&str> = vec![];
         new_args.push(parse_triple(&target));
@@ -157,15 +178,15 @@ impl Build {
             new_args.push(arg);
         }
 
-        let src = Path::new(&cargo_manifest_dir);
+        let src = &PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
+        let dst = &PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set"));
 
-        let dst = Path::new(&out_dir);
 
         let objects = self.make_iter().map(|file| {
             self.compile_file(file.as_ref(), &new_args, src, dst)
         }).collect::<Vec<_>>();
 
-        run(Command::new(ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
+        run(Command::new(self.ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
 
         println!("cargo:rustc-flags=-L {}",
                  dst.display());
@@ -190,6 +211,12 @@ impl Build {
         run(cmd.arg(src.join(file)).arg("-o").arg(&obj));
         obj
     }
+
+    fn ar(&self) -> PathBuf {
+        self.archiver.clone()
+            .or_else(|| env::var_os("AR").map(|a| a.into()))
+            .unwrap_or_else(|| "ar".into())
+    }
 }
 
 fn run(cmd: &mut Command) {
@@ -206,14 +233,12 @@ fn run(cmd: &mut Command) {
     }
 }
 
-fn ar() -> String {
-    env::var("AR").unwrap_or("ar".to_string())
-}
-
-
 #[test]
 fn test_build() {
     let mut build = Build::new();
     build.file("test");
+    build.archiver("ar");
+    build.include("./");
+    build.define("foo", Some("1"));
     build.flag("-test");
 }
