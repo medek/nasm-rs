@@ -70,6 +70,10 @@ pub fn compile_library_args<P: AsRef<Path>>(output: &str, files: &[P], args: &[&
 pub struct Build {
     files: Vec<PathBuf>,
     flags: Vec<String>,
+    target: Option<String>,
+    archiver: Option<PathBuf>,
+    nasm: Option<PathBuf>,
+    debug: bool,
 }
 
 impl Build {
@@ -77,6 +81,10 @@ impl Build {
         Self {
             files: Vec::new(),
             flags: Vec::new(),
+            archiver: None,
+            nasm: None,
+            target: None,
+            debug: env::var("DEBUG").ok().map_or(false, |d| d != "false"),
         }
     }
 
@@ -88,11 +96,64 @@ impl Build {
         self
     }
 
+    /// Add a directory to the `-I` include path
+    pub fn include<P: AsRef<Path>>(&mut self, dir: P) -> &mut Self {
+        self.flags.push(format!("-I{}", dir.as_ref().display()));
+        self
+    }
+
+    /// Pre-define a macro with an optional value
+    pub fn define<'a, V: Into<Option<&'a str>>>(&mut self, var: &str, val: V) -> &mut Self {
+        let val = val.into();
+        let flag = if let Some(val) = val {
+            format!("{}={}", var, val)
+        } else {
+            var.to_owned()
+        };
+        self.flags.push(flag);
+        self
+    }
+
+    /// Configures whether the assembler will generate debug information.
+    ///
+    /// This option is automatically scraped from the `DEBUG` environment
+    /// variable by build scripts (only enabled when the profile is "debug"), so
+    /// it's not required to call this function.
+    pub fn debug(&mut self, enable: bool) -> &mut Self {
+        self.debug = enable;
+        self
+    }
+
     /// Add an arbitrary flag to the invocation of the assembler
     ///
     /// e.g. `"-Fdwarf"`
     pub fn flag(&mut self, flag: &str) -> &mut Self {
         self.flags.push(flag.to_owned());
+        self
+    }
+
+    /// Configures the target this configuration will be compiling for.
+    ///
+    /// This option is automatically scraped from the `TARGET` environment
+    /// variable by build scripts, so it's not required to call this function.
+    pub fn target(&mut self, target: &str) -> &mut Self {
+        self.target = Some(target.to_owned());
+        self
+    }
+
+    /// Configures the tool used to assemble archives.
+    ///
+    /// This option is automatically determined from the target platform or a
+    /// number of environment variables, so it's not required to call this
+    /// function.
+    pub fn archiver<P: AsRef<Path>>(&mut self, archiver: P) -> &mut Self {
+        self.archiver = Some(archiver.as_ref().to_owned());
+        self
+    }
+
+    /// Configures path to `nasm` command
+    pub fn nasm<P: AsRef<Path>>(&mut self, nasm: P) -> &mut Self {
+        self.nasm = Some(nasm.as_ref().to_owned());
         self
     }
 
@@ -111,15 +172,15 @@ impl Build {
         #[cfg(target_env = "msvc")]
         assert!(output.ends_with(".lib"));
 
-        let target = env::var("TARGET").unwrap();
+        let target = self.target.clone()
+            .unwrap_or_else(|| env::var("TARGET").expect("TARGET must be set"));
 
-        let cargo_manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-        let out_dir = env::var("OUT_DIR").unwrap();
+        let nasm = self.find_nasm();
 
         let mut new_args: Vec<&str> = vec![];
         new_args.push(parse_triple(&target));
 
-        if env::var_os("DEBUG").is_some() {
+        if self.debug {
             new_args.push("-g");
         }
 
@@ -127,15 +188,15 @@ impl Build {
             new_args.push(arg);
         }
 
-        let src = Path::new(&cargo_manifest_dir);
+        let src = &PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
+        let dst = &PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set"));
 
-        let dst = Path::new(&out_dir);
 
         let objects = self.make_iter().map(|file| {
-            self.compile_file(file.as_ref(), &new_args, src, dst)
+            self.compile_file(&nasm, file.as_ref(), &new_args, src, dst)
         }).collect::<Vec<_>>();
 
-        run(Command::new(ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
+        run(Command::new(self.ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
 
         println!("cargo:rustc-flags=-L {}",
                  dst.display());
@@ -151,14 +212,59 @@ impl Build {
         self.files.iter()
     }
 
-    fn compile_file(&self, file: &Path, new_args: &[&str], src: &Path, dst: &Path) -> PathBuf {
+    fn compile_file(&self, nasm: &Path, file: &Path, new_args: &[&str], src: &Path, dst: &Path) -> PathBuf {
         let obj = dst.join(file).with_extension("o");
-        let mut cmd = Command::new("nasm");
+        let mut cmd = Command::new(nasm);
         cmd.args(&new_args[..]);
         std::fs::create_dir_all(&obj.parent().unwrap()).unwrap();
 
         run(cmd.arg(src.join(file)).arg("-o").arg(&obj));
         obj
+    }
+
+    fn ar(&self) -> PathBuf {
+        self.archiver.clone()
+            .or_else(|| env::var_os("AR").map(|a| a.into()))
+            .unwrap_or_else(|| "ar".into())
+    }
+
+    fn find_nasm(&mut self) -> PathBuf {
+        match self.nasm.clone() {
+            Some(path) => path,
+            None => {
+                let nasm_path = PathBuf::from("nasm");
+                match is_nasm_new_enough(&nasm_path) {
+                    Ok(_) => nasm_path,
+                    Err(version) => {
+                        panic!("This version of NASM is too old: {}", version);
+                    },
+                }
+            },
+        }
+    }
+}
+
+fn get_output(cmd: &mut Command) -> Result<String, String> {
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr))?
+    }
+}
+
+/// Returns version string if nasm is too old,
+/// or error message string if it's unusable.
+fn is_nasm_new_enough(nasm_path: &Path) -> Result<(), String> {
+    match get_output(Command::new(nasm_path).arg("-v")) {
+        Ok(version) => {
+            if version.contains("NASM version 0.") {
+                Err(version)?
+            } else {
+                Ok(())
+            }
+        },
+        Err(err) => Err(err)?,
     }
 }
 
@@ -176,14 +282,12 @@ fn run(cmd: &mut Command) {
     }
 }
 
-fn ar() -> String {
-    env::var("AR").unwrap_or("ar".to_string())
-}
-
-
 #[test]
 fn test_build() {
     let mut build = Build::new();
     build.file("test");
+    build.archiver("ar");
+    build.include("./");
+    build.define("foo", Some("1"));
     build.flag("-test");
 }
