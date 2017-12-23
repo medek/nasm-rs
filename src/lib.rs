@@ -98,7 +98,8 @@ impl Build {
 
     /// Add a directory to the `-I` include path
     pub fn include<P: AsRef<Path>>(&mut self, dir: P) -> &mut Self {
-        self.flags.push(format!("-I{}", dir.as_ref().display()));
+        // nasm requires trailing slash, but `Path` omits it.
+        self.flags.push(format!("-I{}/", dir.as_ref().display()));
         self
     }
 
