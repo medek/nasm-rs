@@ -177,6 +177,19 @@ impl Build {
         #[cfg(target_env = "msvc")]
         assert!(output.ends_with(".lib"));
 
+        let dst = &self.get_out_dir();
+
+        let objects = self.compile_objects();
+        self.archive(&dst, &output, &objects[..]);
+
+        println!("cargo:rustc-flags=-L {}",
+                 dst.display());
+    }
+
+    /// Run the compiler, generating .o files
+    ///
+    /// The files can be linked in a separate step, e.g. passed to `cc`
+    pub fn compile_objects(&mut self) -> Vec<PathBuf> {
         let target = self.target.clone()
             .unwrap_or_else(|| env::var("TARGET").expect("TARGET must be set"));
 
@@ -184,17 +197,11 @@ impl Build {
         let args = self.get_args(&target);
 
         let src = &PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
-        let dst = &PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set"));
+        let dst = &self.get_out_dir();
 
-
-        let objects = self.make_iter().map(|file| {
+        self.make_iter().map(|file| {
             self.compile_file(&nasm, file.as_ref(), &args, src, dst)
-        }).collect::<Vec<_>>();
-
-        run(Command::new(self.ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
-
-        println!("cargo:rustc-flags=-L {}",
-                 dst.display());
+        }).collect::<Vec<_>>()
     }
 
     fn get_args(&self, target: &str) -> Vec<&str> {
@@ -231,10 +238,16 @@ impl Build {
         obj
     }
 
-    fn ar(&self) -> PathBuf {
-        self.archiver.clone()
+    fn archive(&self, out_dir: &Path, lib: &str, objs: &[PathBuf]) {
+        let ar = self.archiver.clone()
             .or_else(|| env::var_os("AR").map(|a| a.into()))
-            .unwrap_or_else(|| "ar".into())
+            .unwrap_or_else(|| "ar".into());
+
+        run(Command::new(ar).arg("crus").arg(out_dir.join(lib)).args(objs));
+    }
+
+    fn get_out_dir(&self) -> PathBuf {
+        PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set"))
     }
 
     fn find_nasm(&mut self) -> PathBuf {
