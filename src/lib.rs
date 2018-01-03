@@ -181,30 +181,34 @@ impl Build {
             .unwrap_or_else(|| env::var("TARGET").expect("TARGET must be set"));
 
         let nasm = self.find_nasm();
-
-        let mut new_args: Vec<&str> = vec![];
-        new_args.push(parse_triple(&target));
-
-        if self.debug {
-            new_args.push("-g");
-        }
-
-        for arg in &self.flags {
-            new_args.push(arg);
-        }
+        let args = self.get_args(&target);
 
         let src = &PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
         let dst = &PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set"));
 
 
         let objects = self.make_iter().map(|file| {
-            self.compile_file(&nasm, file.as_ref(), &new_args, src, dst)
+            self.compile_file(&nasm, file.as_ref(), &args, src, dst)
         }).collect::<Vec<_>>();
 
         run(Command::new(self.ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
 
         println!("cargo:rustc-flags=-L {}",
                  dst.display());
+    }
+
+    fn get_args(&self, target: &str) -> Vec<&str> {
+        let mut args = vec![parse_triple(&target)];
+
+        if self.debug {
+            args.push("-g");
+        }
+
+        for arg in &self.flags {
+            args.push(arg);
+        }
+
+        args
     }
 
     #[cfg(feature = "parallel")]
@@ -293,6 +297,11 @@ fn test_build() {
     build.file("test");
     build.archiver("ar");
     build.include("./");
+    build.include("dir");
     build.define("foo", Some("1"));
+    build.define("bar", None);
     build.flag("-test");
+    build.target("i686-unknown-linux-musl");
+
+    assert_eq!(build.get_args("i686-unknown-linux-musl"), &["-felf32", "-I./", "-Idir/", "-Dfoo=1", "-Dbar", "-test"]);
 }
