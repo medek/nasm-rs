@@ -111,9 +111,9 @@ impl Build {
     pub fn define<'a, V: Into<Option<&'a str>>>(&mut self, var: &str, val: V) -> &mut Self {
         let val = val.into();
         let flag = if let Some(val) = val {
-            format!("{}={}", var, val)
+            format!("-D{}={}", var, val)
         } else {
-            var.to_owned()
+            format!("-D{}", var)
         };
         self.flags.push(flag);
         self
