@@ -98,6 +98,14 @@ impl Build {
         self
     }
 
+    /// Set multiple files
+    pub fn files<P: AsRef<Path>, I: IntoIterator<Item=P>>(&mut self, files: I) -> &mut Self {
+        for file in files {
+            self.file(file);
+        }
+        self
+    }
+
     /// Add a directory to the `-I` include path
     pub fn include<P: AsRef<Path>>(&mut self, dir: P) -> &mut Self {
         let mut flag = format!("-I{}", dir.as_ref().display());
