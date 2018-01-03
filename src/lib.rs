@@ -71,6 +71,7 @@ pub struct Build {
     files: Vec<PathBuf>,
     flags: Vec<String>,
     target: Option<String>,
+    out_dir: Option<PathBuf>,
     archiver: Option<PathBuf>,
     nasm: Option<PathBuf>,
     debug: bool,
@@ -82,6 +83,7 @@ impl Build {
             files: Vec::new(),
             flags: Vec::new(),
             archiver: None,
+            out_dir: None,
             nasm: None,
             target: None,
             debug: env::var("DEBUG").ok().map_or(false, |d| d != "false"),
@@ -143,6 +145,15 @@ impl Build {
     /// variable by build scripts, so it's not required to call this function.
     pub fn target(&mut self, target: &str) -> &mut Self {
         self.target = Some(target.to_owned());
+        self
+    }
+
+    /// Configures the output directory where all object files and static libraries will be located.
+    ///
+    /// This option is automatically scraped from the OUT_DIR environment variable by build scripts,
+    /// so it's not required to call this function.
+    pub fn out_dir<P: AsRef<Path>>(&mut self, out_dir: P) -> &mut Self {
+        self.out_dir = Some(out_dir.as_ref().to_owned());
         self
     }
 
@@ -247,7 +258,8 @@ impl Build {
     }
 
     fn get_out_dir(&self) -> PathBuf {
-        PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set"))
+        self.out_dir.clone()
+            .unwrap_or_else(|| PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set")))
     }
 
     fn find_nasm(&mut self) -> PathBuf {
@@ -315,6 +327,7 @@ fn test_build() {
     build.define("bar", None);
     build.flag("-test");
     build.target("i686-unknown-linux-musl");
+    build.out_dir("/tmp");
 
     assert_eq!(build.get_args("i686-unknown-linux-musl"), &["-felf32", "-I./", "-Idir/", "-Dfoo=1", "-Dbar", "-test"]);
 }
