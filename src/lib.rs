@@ -183,21 +183,27 @@ impl Build {
 
     /// Run the compiler, generating the file output
     ///
-    /// The name output should be the name of the library
-    /// including platform-specific prefix and file extension,
-    /// e.g. `"libfoo.a"`
-    pub fn compile(&mut self, output: &str) {
-        #[cfg(not(target_env = "msvc"))]
-        assert!(output.starts_with("lib"));
+    /// The name output should be the base name of the library,
+    /// without file extension, and without "lib" prefix.
+    ///
+    /// The output file will have target-specific name,
+    /// such as `lib*.a` (non-MSVC) or `*.lib` (MSVC).
+    pub fn compile(&mut self, lib_name: &str) {
+        // Trim name for backwards comatibility
+        let lib_name = if lib_name.starts_with("lib") && lib_name.ends_with(".a") {
+            &lib_name[3..lib_name.len() - 2]
+        } else {
+            lib_name.trim_right_matches(".lib")
+        };
 
-        #[cfg(not(target_env = "msvc"))]
-        assert!(output.ends_with(".a"));
-
-        #[cfg(target_env = "msvc")]
-        assert!(output.ends_with(".lib"));
+        let target = self.get_target();
+        let output = if target.ends_with("-msvc") {
+            format!("{}.lib", lib_name)
+        } else {
+            format!("lib{}.a", lib_name)
+        };
 
         let dst = &self.get_out_dir();
-
         let objects = self.compile_objects();
         self.archive(&dst, &output, &objects[..]);
 
@@ -209,8 +215,7 @@ impl Build {
     ///
     /// The files can be linked in a separate step, e.g. passed to `cc`
     pub fn compile_objects(&mut self) -> Vec<PathBuf> {
-        let target = self.target.clone()
-            .unwrap_or_else(|| env::var("TARGET").expect("TARGET must be set"));
+        let target = self.get_target();
 
         let nasm = self.find_nasm();
         let args = self.get_args(&target);
@@ -268,6 +273,11 @@ impl Build {
     fn get_out_dir(&self) -> PathBuf {
         self.out_dir.clone()
             .unwrap_or_else(|| PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set")))
+    }
+
+    fn get_target(&self) -> String {
+        self.target.clone()
+            .unwrap_or_else(|| env::var("TARGET").expect("TARGET must be set"))
     }
 
     fn find_nasm(&mut self) -> PathBuf {
