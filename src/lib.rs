@@ -71,6 +71,7 @@ pub struct Build {
     files: Vec<PathBuf>,
     flags: Vec<String>,
     target: Option<String>,
+    out_dir: Option<PathBuf>,
     archiver: Option<PathBuf>,
     nasm: Option<PathBuf>,
     debug: bool,
@@ -82,6 +83,7 @@ impl Build {
             files: Vec::new(),
             flags: Vec::new(),
             archiver: None,
+            out_dir: None,
             nasm: None,
             target: None,
             debug: env::var("DEBUG").ok().map_or(false, |d| d != "false"),
@@ -93,6 +95,14 @@ impl Build {
     /// e.g. `"foo.s"`
     pub fn file<P: AsRef<Path>>(&mut self, p: P) -> &mut Self {
         self.files.push(p.as_ref().to_owned());
+        self
+    }
+
+    /// Set multiple files
+    pub fn files<P: AsRef<Path>, I: IntoIterator<Item=P>>(&mut self, files: I) -> &mut Self {
+        for file in files {
+            self.file(file);
+        }
         self
     }
 
@@ -146,6 +156,15 @@ impl Build {
         self
     }
 
+    /// Configures the output directory where all object files and static libraries will be located.
+    ///
+    /// This option is automatically scraped from the OUT_DIR environment variable by build scripts,
+    /// so it's not required to call this function.
+    pub fn out_dir<P: AsRef<Path>>(&mut self, out_dir: P) -> &mut Self {
+        self.out_dir = Some(out_dir.as_ref().to_owned());
+        self
+    }
+
     /// Configures the tool used to assemble archives.
     ///
     /// This option is automatically determined from the target platform or a
@@ -177,6 +196,19 @@ impl Build {
         #[cfg(target_env = "msvc")]
         assert!(output.ends_with(".lib"));
 
+        let dst = &self.get_out_dir();
+
+        let objects = self.compile_objects();
+        self.archive(&dst, &output, &objects[..]);
+
+        println!("cargo:rustc-flags=-L {}",
+                 dst.display());
+    }
+
+    /// Run the compiler, generating .o files
+    ///
+    /// The files can be linked in a separate step, e.g. passed to `cc`
+    pub fn compile_objects(&mut self) -> Vec<PathBuf> {
         let target = self.target.clone()
             .unwrap_or_else(|| env::var("TARGET").expect("TARGET must be set"));
 
@@ -184,17 +216,11 @@ impl Build {
         let args = self.get_args(&target);
 
         let src = &PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
-        let dst = &PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set"));
+        let dst = &self.get_out_dir();
 
-
-        let objects = self.make_iter().map(|file| {
+        self.make_iter().map(|file| {
             self.compile_file(&nasm, file.as_ref(), &args, src, dst)
-        }).collect::<Vec<_>>();
-
-        run(Command::new(self.ar()).arg("crus").arg(dst.join(output)).args(&objects[..]));
-
-        println!("cargo:rustc-flags=-L {}",
-                 dst.display());
+        }).collect::<Vec<_>>()
     }
 
     fn get_args(&self, target: &str) -> Vec<&str> {
@@ -231,10 +257,17 @@ impl Build {
         obj
     }
 
-    fn ar(&self) -> PathBuf {
-        self.archiver.clone()
+    fn archive(&self, out_dir: &Path, lib: &str, objs: &[PathBuf]) {
+        let ar = self.archiver.clone()
             .or_else(|| env::var_os("AR").map(|a| a.into()))
-            .unwrap_or_else(|| "ar".into())
+            .unwrap_or_else(|| "ar".into());
+
+        run(Command::new(ar).arg("crus").arg(out_dir.join(lib)).args(objs));
+    }
+
+    fn get_out_dir(&self) -> PathBuf {
+        self.out_dir.clone()
+            .unwrap_or_else(|| PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set")))
     }
 
     fn find_nasm(&mut self) -> PathBuf {
@@ -302,6 +335,7 @@ fn test_build() {
     build.define("bar", None);
     build.flag("-test");
     build.target("i686-unknown-linux-musl");
+    build.out_dir("/tmp");
 
     assert_eq!(build.get_args("i686-unknown-linux-musl"), &["-felf32", "-I./", "-Idir/", "-Dfoo=1", "-Dbar", "-test"]);
 }
