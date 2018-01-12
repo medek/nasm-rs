@@ -17,7 +17,7 @@ version = "0.1.1"
 
 [dependencies.rayon]
 optional = true
-version = "0.8.2"
+version = "0.9"
 
 [features]
 parallel = ["rayon"]
