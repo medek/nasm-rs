@@ -10,19 +10,17 @@ use std::path::{Path, PathBuf};
 
 fn x86_triple(os: &str) -> &'static str {
     match os {
-        "linux" => "-felf32",
         "darwin" => "-fmacho32",
         "windows" => "-fwin32",
-        _ => ""
+        _ => "-felf32"
     }
 }
 
 fn x86_64_triple(os: &str) -> &'static str {
     match os {
-        "linux" => "-felf64",
         "darwin" => "-fmacho64",
         "windows" => "-fwin64",
-        _ => ""
+        _ => "-felf64"
     }
 }
 
