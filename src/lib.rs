@@ -261,11 +261,18 @@ impl Build {
     }
 
     fn archive(&self, out_dir: &Path, lib: &str, objs: &[PathBuf]) {
-        let ar = self.archiver.clone()
+        let ar = if cfg!(target_env = "msvc") {
+            self.archiver.clone().unwrap_or_else(|| "lib".into())
+        } else {
+            self.archiver.clone()
             .or_else(|| env::var_os("AR").map(|a| a.into()))
-            .unwrap_or_else(|| "ar".into());
-
-        run(Command::new(ar).arg("crus").arg(out_dir.join(lib)).args(objs));
+            .unwrap_or_else(|| "ar".into())
+        };
+        if cfg!(target_env = "msvc") {
+            run(Command::new(ar).arg("/NAME:".to_owned() + lib).args(objs));
+        } else {
+            run(Command::new(ar).arg("crus").arg(out_dir.join(lib)).args(objs));
+        }
     }
 
     fn get_out_dir(&self) -> PathBuf {
