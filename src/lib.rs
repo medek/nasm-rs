@@ -7,6 +7,7 @@ use std::env;
 use std::process::Command;
 use std::process::Stdio;
 use std::path::{Path, PathBuf};
+use std::ffi::OsString;
 
 fn x86_triple(os: &str) -> &'static str {
     match os {
@@ -269,7 +270,10 @@ impl Build {
             .unwrap_or_else(|| "ar".into())
         };
         if cfg!(target_env = "msvc") {
-            run(Command::new(ar).arg("/NAME:".to_owned() + lib).args(objs));
+            let mut out_param = OsString::new();
+            out_param.push("/OUT:");
+            out_param.push(out_dir.join(lib).as_os_str());
+            run(Command::new(ar).arg(out_param).args(objs));
         } else {
             run(Command::new(ar).arg("crus").arg(out_dir.join(lib)).args(objs));
         }
