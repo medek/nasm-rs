@@ -9,35 +9,35 @@ use std::process::Stdio;
 use std::path::{Path, PathBuf};
 use std::ffi::OsString;
 
-fn x86_triple(os: &str) -> &'static str {
+fn x86_triple(os: &str) -> (&'static str, &'static str) {
     match os {
-        "darwin" | "ios" => "-fmacho32",
-        "windows" => "-fwin32",
-        _ => "-felf32"
+        "darwin" | "ios" => ("-fmacho32", "-g"),,
+        "windows" => ("-fwin32", "-g"),
+        _ => ("-felf32", "-gdwarf"),
     }
 }
 
-fn x86_64_triple(os: &str) -> &'static str {
+fn x86_64_triple(os: &str) -> (&'static str, &'static str) {
     match os {
-        "darwin" | "ios" => "-fmacho64",
-        "windows" => "-fwin64",
-        _ => "-felf64"
+        "darwin" | "ios" => ("-fmacho64", "-g"),
+        "windows" => ("-fwin64", "-g"),
+        _ => ("-fwin64", "-g")
     }
 }
 
-fn parse_triple(trip: &str) -> &'static str {
+fn parse_triple(trip: &str) -> (&'static str, &'static str) {
     let parts = trip.split('-').collect::<Vec<_>>();
     // ARCH-VENDOR-OS-ENVIRONMENT
     // or ARCH-VENDOR-OS
     // we don't care about environ so doesn't matter if triple doesn't have it
     if parts.len() < 3 {
-        return ""
+        return ("", "-g")
     }
 
     match parts[0] {
         "x86_64" => x86_64_triple(parts[2]),
         "x86" | "i386" | "i586" | "i686" => x86_triple(parts[2]),
-        _ => ""
+        _ => ("", "-g")
     }
 }
 
@@ -192,7 +192,7 @@ impl Build {
         let lib_name = if lib_name.starts_with("lib") && lib_name.ends_with(".a") {
             &lib_name[3..lib_name.len() - 2]
         } else {
-            lib_name.trim_right_matches(".lib")
+            lib_name.trim_end_matches(".lib")
         };
 
         let target = self.get_target();
@@ -206,7 +206,7 @@ impl Build {
         let objects = self.compile_objects();
         self.archive(&dst, &output, &objects[..]);
 
-        println!("cargo:rustc-flags=-L {}",
+        println!("cargo:rustc-link-search={}",
                  dst.display());
     }
 
@@ -228,10 +228,11 @@ impl Build {
     }
 
     fn get_args(&self, target: &str) -> Vec<&str> {
-        let mut args = vec![parse_triple(&target)];
+        let (arch_flag, debug_flag) = parse_triple(&target);
+        let mut args = vec![arch_flag];
 
         if self.debug {
-            args.push("-g");
+            args.push(debug_flag);
         }
 
         for arg in &self.flags {
