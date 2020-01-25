@@ -21,7 +21,7 @@ fn x86_64_triple(os: &str) -> (&'static str, &'static str) {
     match os {
         "darwin" | "ios" => ("-fmacho64", "-g"),
         "windows" => ("-fwin64", "-g"),
-        _ => ("-fwin64", "-g")
+        _ => ("-felf64", "-gdwarf")
     }
 }
 
