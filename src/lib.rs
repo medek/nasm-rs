@@ -12,7 +12,7 @@ use std::ffi::OsString;
 fn x86_triple(os: &str) -> (&'static str, &'static str) {
     match os {
         "darwin" | "ios" => ("-fmacho32", "-g"),
-        "windows" => ("-fwin32", "-g"),
+        "windows" | "uefi" => ("-fwin32", "-g"),
         _ => ("-felf32", "-gdwarf"),
     }
 }
@@ -20,7 +20,7 @@ fn x86_triple(os: &str) -> (&'static str, &'static str) {
 fn x86_64_triple(os: &str) -> (&'static str, &'static str) {
     match os {
         "darwin" | "ios" => ("-fmacho64", "-g"),
-        "windows" => ("-fwin64", "-g"),
+        "windows" | "uefi" => ("-fwin64", "-g"),
         _ => ("-felf64", "-gdwarf")
     }
 }
