@@ -12,7 +12,7 @@ use std::ffi::OsString;
 fn x86_triple(os: &str) -> (&'static str, &'static str) {
     match os {
         "darwin" | "ios" => ("-fmacho32", "-g"),
-        "windows" => ("-fwin32", "-g"),
+        "windows" | "uefi" => ("-fwin32", "-g"),
         _ => ("-felf32", "-gdwarf"),
     }
 }
@@ -20,7 +20,7 @@ fn x86_triple(os: &str) -> (&'static str, &'static str) {
 fn x86_64_triple(os: &str) -> (&'static str, &'static str) {
     match os {
         "darwin" | "ios" => ("-fmacho64", "-g"),
-        "windows" => ("-fwin64", "-g"),
+        "windows" | "uefi" => ("-fwin64", "-g"),
         _ => ("-felf64", "-gdwarf")
     }
 }
@@ -72,6 +72,7 @@ pub struct Build {
     target: Option<String>,
     out_dir: Option<PathBuf>,
     archiver: Option<PathBuf>,
+    archiver_is_msvc: Option<bool>,
     nasm: Option<PathBuf>,
     debug: bool,
 }
@@ -82,6 +83,7 @@ impl Build {
             files: Vec::new(),
             flags: Vec::new(),
             archiver: None,
+            archiver_is_msvc: None,
             out_dir: None,
             nasm: None,
             target: None,
@@ -174,6 +176,15 @@ impl Build {
         self
     }
 
+    /// Configures the default archiver tool as well as the command syntax.
+    ///
+    /// This option is automatically determined from `cfg!(target_env = "msvc")`,
+    /// so it's not required to call this function.
+    pub fn archiver_is_msvc(&mut self, is_msvc: bool) -> &mut Self {
+        self.archiver_is_msvc = Some(is_msvc);
+        self
+    }
+
     /// Configures path to `nasm` command
     pub fn nasm<P: AsRef<Path>>(&mut self, nasm: P) -> &mut Self {
         self.nasm = Some(nasm.as_ref().to_owned());
@@ -263,14 +274,16 @@ impl Build {
     }
 
     fn archive(&self, out_dir: &Path, lib: &str, objs: &[PathBuf]) {
-        let ar = if cfg!(target_env = "msvc") {
+        let ar_is_msvc = self.archiver_is_msvc.unwrap_or(cfg!(target_env = "msvc"));
+
+        let ar = if ar_is_msvc {
             self.archiver.clone().unwrap_or_else(|| "lib".into())
         } else {
             self.archiver.clone()
             .or_else(|| env::var_os("AR").map(|a| a.into()))
             .unwrap_or_else(|| "ar".into())
         };
-        if cfg!(target_env = "msvc") {
+        if ar_is_msvc {
             let mut out_param = OsString::new();
             out_param.push("/OUT:");
             out_param.push(out_dir.join(lib).as_os_str());
