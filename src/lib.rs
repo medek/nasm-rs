@@ -75,6 +75,7 @@ pub struct Build {
     archiver_is_msvc: Option<bool>,
     nasm: Option<PathBuf>,
     debug: bool,
+    min_version: (usize, usize, usize),
 }
 
 impl Build {
@@ -87,6 +88,7 @@ impl Build {
             out_dir: None,
             nasm: None,
             target: None,
+            min_version: (1, 0, 0),
             debug: env::var("DEBUG").ok().map_or(false, |d| d != "false"),
         }
     }
@@ -188,6 +190,12 @@ impl Build {
     /// Configures path to `nasm` command
     pub fn nasm<P: AsRef<Path>>(&mut self, nasm: P) -> &mut Self {
         self.nasm = Some(nasm.as_ref().to_owned());
+        self
+    }
+
+    /// Set the minimum version required
+    pub fn min_version(&mut self, major: usize, minor: usize, micro: usize) -> &mut Self {
+        self.min_version = (major, minor, micro);
         self
     }
 
@@ -303,17 +311,40 @@ impl Build {
             .unwrap_or_else(|| env::var("TARGET").expect("TARGET must be set"))
     }
 
+    /// Returns version string if nasm is too old,
+    /// or error message string if it's unusable.
+    fn is_nasm_new_enough(&self, nasm_path: &Path) -> Result<(), String> {
+        let version = get_output(Command::new(nasm_path).arg("-v"))?;
+        let (major, minor, micro) = self.min_version;
+        let ver: Vec<usize> = version
+            .split(" ")
+            .skip(2)
+            .next()
+            .map(|ver| {
+                ver.split(".")
+                    .map(|v| v.parse().expect("Invalid version component"))
+                    .collect()
+            })
+            .expect("Invalid version");
+        if ver.len() < 3 {
+            panic!("Not enough version components");
+        } else {
+            if major > ver[0] ||
+            (major == ver[0] && minor > ver[1]) ||
+             (major == ver[0] && minor == ver[1] && micro > ver[2]) {
+                Err(version)?
+            } else {
+                Ok(())
+            }
+        }
+    }
+
     fn find_nasm(&mut self) -> PathBuf {
-        match self.nasm.clone() {
-            Some(path) => path,
-            None => {
-                let nasm_path = PathBuf::from("nasm");
-                match is_nasm_new_enough(&nasm_path) {
-                    Ok(_) => nasm_path,
-                    Err(version) => {
-                        panic!("This version of NASM is too old: {}", version);
-                    },
-                }
+        let nasm_path = self.nasm.clone().unwrap_or_else(|| PathBuf::from("nasm"));
+        match self.is_nasm_new_enough(&nasm_path) {
+            Ok(_) => nasm_path,
+            Err(version) => {
+                panic!("This version of NASM is too old: {}", version);
             },
         }
     }
@@ -325,21 +356,6 @@ fn get_output(cmd: &mut Command) -> Result<String, String> {
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
     } else {
         Err(String::from_utf8_lossy(&out.stderr))?
-    }
-}
-
-/// Returns version string if nasm is too old,
-/// or error message string if it's unusable.
-fn is_nasm_new_enough(nasm_path: &Path) -> Result<(), String> {
-    match get_output(Command::new(nasm_path).arg("-v")) {
-        Ok(version) => {
-            if version.contains("NASM version 0.") {
-                Err(version)?
-            } else {
-                Ok(())
-            }
-        },
-        Err(err) => Err(err)?,
     }
 }
 
@@ -369,6 +385,7 @@ fn test_build() {
     build.flag("-test");
     build.target("i686-unknown-linux-musl");
     build.out_dir("/tmp");
+    build.min_version(0, 0, 0);
 
     assert_eq!(build.get_args("i686-unknown-linux-musl"), &["-felf32", "-I./", "-Idir/", "-Dfoo=1", "-Dbar", "-test"]);
 }
