@@ -316,7 +316,7 @@ impl Build {
     fn is_nasm_new_enough(&self, nasm_path: &Path) -> Result<(), String> {
         let version = get_output(Command::new(nasm_path).arg("-v"))?;
         let (major, minor, micro) = self.min_version;
-        let ver: Vec<usize> = version
+        let ver: Vec<usize> = version.trim_end()
             .split(" ")
             .skip(2)
             .next()
