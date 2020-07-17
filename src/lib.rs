@@ -322,7 +322,7 @@ impl Build {
             .next()
             .map(|ver| {
                 ver.split(".")
-                    .map(|v| v.parse().expect("Invalid version component"))
+                    .map(|v| v.trim().parse().expect("Invalid version component"))
                     .collect()
             })
             .expect("Invalid version");
