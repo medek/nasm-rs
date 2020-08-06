@@ -1,13 +1,16 @@
+extern crate arrayvec;
 #[cfg(feature = "parallel")]
 extern crate rayon;
+
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use arrayvec::ArrayVec;
 use std::env;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::Stdio;
-use std::path::{Path, PathBuf};
-use std::ffi::OsString;
 
 fn x86_triple(os: &str) -> (&'static str, &'static str) {
     match os {
@@ -21,7 +24,7 @@ fn x86_64_triple(os: &str) -> (&'static str, &'static str) {
     match os {
         "darwin" | "ios" => ("-fmacho64", "-g"),
         "windows" | "uefi" => ("-fwin64", "-g"),
-        _ => ("-felf64", "-gdwarf")
+        _ => ("-felf64", "-gdwarf"),
     }
 }
 
@@ -31,31 +34,35 @@ fn parse_triple(trip: &str) -> (&'static str, &'static str) {
     // or ARCH-VENDOR-OS
     // we don't care about environ so doesn't matter if triple doesn't have it
     if parts.len() < 3 {
-        return ("", "-g")
+        return ("", "-g");
     }
 
     match parts[0] {
         "x86_64" => x86_64_triple(parts[2]),
         "x86" | "i386" | "i586" | "i686" => x86_triple(parts[2]),
-        _ => ("", "-g")
+        _ => ("", "-g"),
     }
 }
 
 /// # Example
 ///
 /// ```no_run
-/// nasm_rs::compile_library("libfoo.a", &["foo.s", "bar.s"]);
+/// nasm_rs::compile_library("libfoo.a", &["foo.s", "bar.s"]).unwrap();
 /// ```
-pub fn compile_library(output: &str, files: &[&str]) {
-    compile_library_args(output, files, &[]);
+pub fn compile_library(output: &str, files: &[&str]) -> Result<(), String> {
+    compile_library_args(output, files, &[])
 }
 
 /// # Example
 ///
 /// ```no_run
-/// nasm_rs::compile_library_args("libfoo.a", &["foo.s", "bar.s"], &["-Fdwarf"]);
+/// nasm_rs::compile_library_args("libfoo.a", &["foo.s", "bar.s"], &["-Fdwarf"]).unwrap();
 /// ```
-pub fn compile_library_args<P: AsRef<Path>>(output: &str, files: &[P], args: &[&str]) {
+pub fn compile_library_args<P: AsRef<Path>>(
+    output: &str,
+    files: &[P],
+    args: &[&str],
+) -> Result<(), String> {
     let mut b = Build::new();
     for file in files {
         b.file(file);
@@ -63,7 +70,7 @@ pub fn compile_library_args<P: AsRef<Path>>(output: &str, files: &[P], args: &[&
     for arg in args {
         b.flag(arg);
     }
-    b.compile(output);
+    b.compile(output)
 }
 
 pub struct Build {
@@ -102,7 +109,7 @@ impl Build {
     }
 
     /// Set multiple files
-    pub fn files<P: AsRef<Path>, I: IntoIterator<Item=P>>(&mut self, files: I) -> &mut Self {
+    pub fn files<P: AsRef<Path>, I: IntoIterator<Item = P>>(&mut self, files: I) -> &mut Self {
         for file in files {
             self.file(file);
         }
@@ -113,7 +120,7 @@ impl Build {
     pub fn include<P: AsRef<Path>>(&mut self, dir: P) -> &mut Self {
         let mut flag = format!("-I{}", dir.as_ref().display());
         // nasm requires trailing slash, but `Path` may omit it.
-        if !flag.ends_with("/") {
+        if !flag.ends_with('/') {
             flag += "/";
         }
         self.flags.push(flag);
@@ -206,7 +213,7 @@ impl Build {
     ///
     /// The output file will have target-specific name,
     /// such as `lib*.a` (non-MSVC) or `*.lib` (MSVC).
-    pub fn compile(&mut self, lib_name: &str) {
+    pub fn compile(&mut self, lib_name: &str) -> Result<(), String> {
         // Trim name for backwards comatibility
         let lib_name = if lib_name.starts_with("lib") && lib_name.ends_with(".a") {
             &lib_name[3..lib_name.len() - 2]
@@ -222,28 +229,30 @@ impl Build {
         };
 
         let dst = &self.get_out_dir();
-        let objects = self.compile_objects();
-        self.archive(&dst, &output, &objects[..]);
+        let objects = self.compile_objects()?;
+        self.archive(&dst, &output, &objects[..])?;
 
-        println!("cargo:rustc-link-search={}",
-                 dst.display());
+        println!("cargo:rustc-link-search={}", dst.display());
+        Ok(())
     }
 
     /// Run the compiler, generating .o files
     ///
     /// The files can be linked in a separate step, e.g. passed to `cc`
-    pub fn compile_objects(&mut self) -> Vec<PathBuf> {
+    pub fn compile_objects(&mut self) -> Result<Vec<PathBuf>, String> {
         let target = self.get_target();
 
-        let nasm = self.find_nasm();
+        let nasm = self.find_nasm()?;
         let args = self.get_args(&target);
 
-        let src = &PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
+        let src = &PathBuf::from(
+            env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"),
+        );
         let dst = &self.get_out_dir();
 
-        self.make_iter().map(|file| {
-            self.compile_file(&nasm, file.as_ref(), &args, src, dst)
-        }).collect::<Vec<_>>()
+        self.make_iter()
+            .map(|file| self.compile_file(&nasm, file.as_ref(), &args, src, dst))
+            .collect::<Result<Vec<_>, String>>()
     }
 
     fn get_args(&self, target: &str) -> Vec<&str> {
@@ -271,43 +280,56 @@ impl Build {
         self.files.iter()
     }
 
-    fn compile_file(&self, nasm: &Path, file: &Path, new_args: &[&str], src: &Path, dst: &Path) -> PathBuf {
+    fn compile_file(
+        &self,
+        nasm: &Path,
+        file: &Path,
+        new_args: &[&str],
+        src: &Path,
+        dst: &Path,
+    ) -> Result<PathBuf, String> {
         let obj = dst.join(file).with_extension("o");
         let mut cmd = Command::new(nasm);
         cmd.args(&new_args[..]);
         std::fs::create_dir_all(&obj.parent().unwrap()).unwrap();
 
-        run(cmd.arg(src.join(file)).arg("-o").arg(&obj));
-        obj
+        run(cmd.arg(src.join(file)).arg("-o").arg(&obj))?;
+        Ok(obj)
     }
 
-    fn archive(&self, out_dir: &Path, lib: &str, objs: &[PathBuf]) {
+    fn archive(&self, out_dir: &Path, lib: &str, objs: &[PathBuf]) -> Result<(), String> {
         let ar_is_msvc = self.archiver_is_msvc.unwrap_or(cfg!(target_env = "msvc"));
 
         let ar = if ar_is_msvc {
             self.archiver.clone().unwrap_or_else(|| "lib".into())
         } else {
-            self.archiver.clone()
-            .or_else(|| env::var_os("AR").map(|a| a.into()))
-            .unwrap_or_else(|| "ar".into())
+            self.archiver
+                .clone()
+                .or_else(|| env::var_os("AR").map(|a| a.into()))
+                .unwrap_or_else(|| "ar".into())
         };
         if ar_is_msvc {
             let mut out_param = OsString::new();
             out_param.push("/OUT:");
             out_param.push(out_dir.join(lib).as_os_str());
-            run(Command::new(ar).arg(out_param).args(objs));
+            run(Command::new(ar).arg(out_param).args(objs))
         } else {
-            run(Command::new(ar).arg("crus").arg(out_dir.join(lib)).args(objs));
+            run(Command::new(ar)
+                .arg("crus")
+                .arg(out_dir.join(lib))
+                .args(objs))
         }
     }
 
     fn get_out_dir(&self) -> PathBuf {
-        self.out_dir.clone()
+        self.out_dir
+            .clone()
             .unwrap_or_else(|| PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set")))
     }
 
     fn get_target(&self) -> String {
-        self.target.clone()
+        self.target
+            .clone()
             .unwrap_or_else(|| env::var("TARGET").expect("TARGET must be set"))
     }
 
@@ -316,37 +338,44 @@ impl Build {
     fn is_nasm_new_enough(&self, nasm_path: &Path) -> Result<(), String> {
         let version = get_output(Command::new(nasm_path).arg("-v"))?;
         let (major, minor, micro) = self.min_version;
-        let ver: Vec<usize> = version
-            .split(" ")
-            .skip(2)
-            .next()
-            .map(|ver| {
-                ver.split(".")
-                    .map(|v| v.parse().expect("Invalid version component"))
-                    .collect()
-            })
-            .expect("Invalid version");
-        if ver.len() < 3 {
-            panic!("Not enough version components");
+        let ver = parse_nasm_version(&version)?;
+        if major > ver.0
+            || (major == ver.0 && minor > ver.1)
+            || (major == ver.0 && minor == ver.1 && micro > ver.2)
+        {
+            Err(version)
         } else {
-            if major > ver[0] ||
-            (major == ver[0] && minor > ver[1]) ||
-             (major == ver[0] && minor == ver[1] && micro > ver[2]) {
-                Err(version)?
-            } else {
-                Ok(())
-            }
+            Ok(())
         }
     }
 
-    fn find_nasm(&mut self) -> PathBuf {
+    fn find_nasm(&mut self) -> Result<PathBuf, String> {
         let nasm_path = self.nasm.clone().unwrap_or_else(|| PathBuf::from("nasm"));
         match self.is_nasm_new_enough(&nasm_path) {
-            Ok(_) => nasm_path,
-            Err(version) => {
-                panic!("This version of NASM is too old: {}", version);
-            },
+            Ok(_) => Ok(nasm_path),
+            Err(version) => Err(format!("This version of NASM is too old: {}", version)),
         }
+    }
+}
+
+fn parse_nasm_version(version: &str) -> Result<(usize, usize, usize), String> {
+    let ver: ArrayVec<[usize; 3]> = version
+        .split(' ')
+        .nth(2)
+        .map(|ver| {
+            ver.split('.')
+                .map(|v| v.parse())
+                .take_while(Result::is_ok)
+                .map(Result::unwrap)
+                .collect()
+        })
+        .ok_or_else(|| "Invalid version".to_string())?;
+    if ver.len() == 3 {
+        Ok((ver[0], ver[1], ver[2]))
+    } else if ver.len() == 2 {
+        Ok((ver[0], ver[1], 0))
+    } else {
+        Ok((ver[0], 0, 0))
     }
 }
 
@@ -355,22 +384,27 @@ fn get_output(cmd: &mut Command) -> Result<String, String> {
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
     } else {
-        Err(String::from_utf8_lossy(&out.stderr))?
+        Err(String::from_utf8_lossy(&out.stderr).to_string())
     }
 }
 
-fn run(cmd: &mut Command) {
+fn run(cmd: &mut Command) -> Result<(), String> {
     println!("running: {:?}", cmd);
 
-    let status = match cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit()).status() {
+    let status = match cmd
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+    {
         Ok(status) => status,
 
-        Err(e) => panic!("failed to spawn process: {}", e),
+        Err(e) => return Err(format!("failed to spawn process: {}", e)),
     };
 
     if !status.success() {
-        panic!("nonzero exit status: {}", status);
+        return Err(format!("nonzero exit status: {}", status));
     }
+    Ok(())
 }
 
 #[test]
@@ -387,5 +421,20 @@ fn test_build() {
     build.out_dir("/tmp");
     build.min_version(0, 0, 0);
 
-    assert_eq!(build.get_args("i686-unknown-linux-musl"), &["-felf32", "-I./", "-Idir/", "-Dfoo=1", "-Dbar", "-test"]);
+    assert_eq!(
+        build.get_args("i686-unknown-linux-musl"),
+        &["-felf32", "-I./", "-Idir/", "-Dfoo=1", "-Dbar", "-test"]
+    );
+}
+
+#[test]
+fn test_parse_nasm_version() {
+    let ver_str = "NASM version 2.14.02 compiled on Jan 22 2019";
+    assert_eq!((2, 14, 2), parse_nasm_version(ver_str).unwrap());
+    let ver_str = "NASM version 2.14.02";
+    assert_eq!((2, 14, 2), parse_nasm_version(ver_str).unwrap());
+    let ver_str = "NASM version 2.14 compiled on Jan 22 2019";
+    assert_eq!((2, 14, 0), parse_nasm_version(ver_str).unwrap());
+    let ver_str = "NASM version 2.14";
+    assert_eq!((2, 14, 0), parse_nasm_version(ver_str).unwrap());
 }
