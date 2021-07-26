@@ -1,11 +1,6 @@
-extern crate arrayvec;
-#[cfg(feature = "parallel")]
-extern crate rayon;
-
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use arrayvec::ArrayVec;
 use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -276,7 +271,7 @@ impl Build {
     }
 
     #[cfg(not(feature = "parallel"))]
-    fn make_iter(&self) -> std::slice::Iter<PathBuf> {
+    fn make_iter(&self) -> std::slice::Iter<'_, PathBuf> {
         self.files.iter()
     }
 
@@ -359,24 +354,23 @@ impl Build {
 }
 
 fn parse_nasm_version(version: &str) -> Result<(usize, usize, usize), String> {
-    let ver: ArrayVec<[usize; 3]> = version
+    let ver = version
         .split(' ')
         .nth(2)
-        .map(|ver| {
-            ver.split('.')
-                .map(|v| v.parse())
-                .take_while(Result::is_ok)
-                .map(Result::unwrap)
-                .collect()
-        })
-        .ok_or_else(|| "Invalid version".to_string())?;
-    if ver.len() == 3 {
-        Ok((ver[0], ver[1], ver[2]))
-    } else if ver.len() == 2 {
-        Ok((ver[0], ver[1], 0))
-    } else {
-        Ok((ver[0], 0, 0))
-    }
+        .ok_or_else(|| format!("Invalid nasm version '{}'", version))?;
+
+    let ver: Vec<_> = ver
+        .split('.')
+        .map(|v| v.parse())
+        .take_while(Result::is_ok)
+        .map(Result::unwrap)
+        .collect();
+
+    Ok((
+        ver[0],
+        ver.get(1).copied().unwrap_or(0),
+        ver.get(2).copied().unwrap_or(0),
+    ))
 }
 
 fn get_output(cmd: &mut Command) -> Result<String, String> {
