@@ -1,14 +1,14 @@
 # NASM
 
-Run NASM during your Cargo build.
+Run [NASM](https://www.nasm.us/) during your Cargo build.
 
 ```rust
-extern crate nasm_rs;
-
 fn main() {
     nasm_rs::compile_library("libfoo.a", &["foo.s", "bar.s"]);
 }
 ```
+
+It requires a `nasm` executable already installed on the system.
 
 ## License
 

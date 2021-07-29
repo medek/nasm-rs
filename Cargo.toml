@@ -14,13 +14,11 @@ name = "nasm-rs"
 readme = "README.markdown"
 repository = "https://github.com/medek/nasm-rs"
 version = "0.2.0"
-
-[dependencies]
-arrayvec = "0.5"
+edition = "2018"
 
 [dependencies.rayon]
 optional = true
-version = "1.0"
+version = "1.4"
 
 [features]
 parallel = ["rayon"]
