@@ -330,26 +330,48 @@ impl Build {
 
     /// Returns version string if nasm is too old,
     /// or error message string if it's unusable.
-    fn is_nasm_new_enough(&self, nasm_path: &Path) -> Result<(), String> {
-        let version = get_output(Command::new(nasm_path).arg("-v"))?;
+    fn is_nasm_found_and_new_enough(&self, nasm_path: &Path) -> Result<(), String> {
+        let version = get_output(Command::new(nasm_path).arg("-v"))
+            .map_err(|e| format!("Unable to run {}: {}", nasm_path.display(), e))?;
         let (major, minor, micro) = self.min_version;
         let ver = parse_nasm_version(&version)?;
         if major > ver.0
             || (major == ver.0 && minor > ver.1)
             || (major == ver.0 && minor == ver.1 && micro > ver.2)
         {
-            Err(version)
+            Err(format!(
+                "This version of NASM is too old: {}. Required >= {}.{}.{}",
+                version, major, minor, micro
+            ))
         } else {
             Ok(())
         }
     }
 
     fn find_nasm(&mut self) -> Result<PathBuf, String> {
-        let nasm_path = self.nasm.clone().unwrap_or_else(|| PathBuf::from("nasm"));
-        match self.is_nasm_new_enough(&nasm_path) {
-            Ok(_) => Ok(nasm_path),
-            Err(version) => Err(format!("This version of NASM is too old: {}", version)),
+        let paths = match &self.nasm {
+            Some(p) => vec![p.to_owned()],
+            None => {
+                // Xcode has an outdated verison of nasm,
+                // and puts its own SDK first in the PATH.
+                // The proper Homebrew nasm is later in the PATH.
+                let path = env::var_os("PATH").unwrap_or_default();
+                std::iter::once(PathBuf::from("nasm"))
+                    .chain(env::split_paths(&path).map(|p| p.join("nasm")))
+                    .collect()
+            }
+        };
+
+        let mut first_error = None;
+        for nasm_path in paths {
+            match self.is_nasm_found_and_new_enough(&nasm_path) {
+                Ok(_) => return Ok(nasm_path),
+                Err(err) => {
+                    let _ = first_error.get_or_insert(err);
+                }
+            }
         }
+        Err(first_error.unwrap())
     }
 }
 
