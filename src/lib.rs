@@ -376,11 +376,15 @@ impl Build {
 }
 
 fn parse_nasm_version(version: &str) -> Result<(usize, usize, usize), String> {
-    let ver = version
+    let mut ver = version
         .split(' ')
         .nth(2)
         .ok_or_else(|| format!("Invalid nasm version '{}'", version))?;
 
+    //this will probably break at some point...
+    if let Some(ver_rc) = ver.find("rc") {
+        ver = &ver[0..ver_rc];
+    }
     let ver: Vec<_> = ver
         .split('.')
         .map(|v| v.parse())
@@ -452,5 +456,7 @@ fn test_parse_nasm_version() {
     let ver_str = "NASM version 2.14 compiled on Jan 22 2019";
     assert_eq!((2, 14, 0), parse_nasm_version(ver_str).unwrap());
     let ver_str = "NASM version 2.14";
+    assert_eq!((2, 14, 0), parse_nasm_version(ver_str).unwrap());
+    let ver_str = "NASM version 2.14rc2";
     assert_eq!((2, 14, 0), parse_nasm_version(ver_str).unwrap());
 }
