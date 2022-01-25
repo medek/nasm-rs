@@ -33,7 +33,13 @@ fn parse_triple(trip: &str) -> (&'static str, &'static str) {
     }
 
     match parts[0] {
-        "x86_64" => x86_64_triple(parts[2]),
+        "x86_64" => {
+            if parts.len() >= 4 && parts[3] == "gnux32" {
+                ("-felfx32", "-gdwarf")
+            } else {
+                x86_64_triple(parts[2])
+            }
+        },
         "x86" | "i386" | "i586" | "i686" => x86_triple(parts[2]),
         _ => ("", "-g"),
     }
