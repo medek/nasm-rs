@@ -27,7 +27,7 @@ fn parse_triple(trip: &str) -> (&'static str, &'static str) {
     let parts = trip.split('-').collect::<Vec<_>>();
     // ARCH-VENDOR-OS-ENVIRONMENT
     // or ARCH-VENDOR-OS
-    // we don't care about environ so doesn't matter if triple doesn't have it
+    // we don't care about environ (yes, we do... gnux32) so doesn't matter if triple doesn't have it
     if parts.len() < 3 {
         return ("", "-g");
     }
@@ -466,3 +466,13 @@ fn test_parse_nasm_version() {
     let ver_str = "NASM version 2.14rc2";
     assert_eq!((2, 14, 0), parse_nasm_version(ver_str).unwrap());
 }
+
+#[test]
+fn test_parse_triple() {
+    let triple = "x86_64-unknown-linux-gnux32";
+    assert_eq!(parse_triple(&triple), ("-felfx32", "-gdwarf"));
+    
+    let triple = "x86_64-unknown-linux";
+    assert_eq!(parse_triple(&triple), ("-felf64", "-gdwarf"));
+}
+
