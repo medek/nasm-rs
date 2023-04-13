@@ -289,7 +289,7 @@ impl Build {
         src: &Path,
         dst: &Path,
     ) -> Result<PathBuf, String> {
-        let obj = dst.join(file).with_extension("o");
+        let obj = dst.join(file.file_name().unwrap()).with_extension("o");
         let mut cmd = Command::new(nasm);
         cmd.args(&new_args[..]);
         std::fs::create_dir_all(&obj.parent().unwrap()).unwrap();
