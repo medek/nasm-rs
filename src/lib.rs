@@ -4,6 +4,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::Stdio;
 
+#[cfg(feature = "parallel")]
+use std::sync::OnceLock;
+
+#[cfg(feature = "parallel")]
+static JOBSERVER: OnceLock<jobserver::Client> = OnceLock::new();
+
 fn x86_triple(os: &str) -> (&'static str, &'static str) {
     match os {
         "darwin" | "ios" => ("-fmacho32", "-g"),
@@ -260,11 +266,58 @@ impl Build {
         src: &Path,
         dst: &Path,
     ) -> Result<Vec<PathBuf>, String> {
-        use rayon::prelude::*;
+        use jobserver::Client;
+        use std::panic;
 
-        files
-            .par_iter()
-            .map(|file| self.compile_file(&nasm, file, &args, src, dst))
+        let jobserver = JOBSERVER.get_or_init(|| {
+            // Try getting a jobserver from the environment (cargo, make, ...)
+            unsafe { Client::from_env() }.unwrap_or_else(|| {
+                // If that fails, create our own jobserver based on NUM_JOBS
+                let job_limit: usize = env::var("NUM_JOBS")
+                    .expect("NUM_JOBS must be set")
+                    .parse()
+                    .expect("NUM_JOBS must be parsable to usize");
+
+                // Reserve a job token for this process so the behavior
+                // is consistent with external job servers.
+                let client = Client::new(job_limit).expect("Failed to create a job server");
+                client.acquire_raw().expect("Failed to acquire initial job token");
+                client
+            })
+        });
+
+        // Release the implicit job token for this process while NASM is running.
+        // Without this, the maximum number of NASM processes would be (NUM_JOBS - 1).
+        // This would mean that a build process with NUM_JOBS=1 would have 
+        // no tokens left for NASM to run, causing the build to stall.
+        jobserver.release_raw().unwrap();
+
+        let thread_results: Vec<_> = std::thread::scope(|s| {
+            let mut handles = Vec::with_capacity(files.len());
+
+            for file in files {
+                // Wait for a job token before starting the build
+                let token = jobserver.acquire().expect("Failed to acquire job token");
+                let handle = s.spawn(move || {
+                    let result = self.compile_file(nasm, file, args, src, dst);
+                    // Release the token ASAP so that another job can start
+                    drop(token);
+                    result
+                });
+                handles.push(handle);
+            }
+
+            // Collect results from all threads without handling panics
+            handles.into_iter().map(|h| h.join()).collect()
+        });
+
+        // Reacquire the implicit job token (see comments above for more info).
+        jobserver.acquire_raw().expect("Failed to reacquire implicit token");
+
+        // Only handle thread panics after all threads have stopped
+        thread_results
+            .into_iter()
+            .map(|thread_res| thread_res.unwrap_or_else(|e| panic::resume_unwind(e)))
             .collect()
     }
 
