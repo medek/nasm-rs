@@ -1,6 +1,3 @@
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
-
 use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -251,9 +248,39 @@ impl Build {
         );
         let dst = &self.get_out_dir();
 
-        self.make_iter()
-            .map(|file| self.compile_file(&nasm, file.as_ref(), &args, src, dst))
-            .collect::<Result<Vec<_>, String>>()
+        self.compile_objects_inner(&nasm, &self.files, &args, src, dst)
+    }
+
+    #[cfg(feature = "parallel")]
+    fn compile_objects_inner(
+        &self,
+        nasm: &Path,
+        files: &[PathBuf],
+        args: &[&str],
+        src: &Path,
+        dst: &Path,
+    ) -> Result<Vec<PathBuf>, String> {
+        use rayon::prelude::*;
+
+        files
+            .par_iter()
+            .map(|file| self.compile_file(&nasm, file, &args, src, dst))
+            .collect()
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    fn compile_objects_inner(
+        &self,
+        nasm: &Path,
+        files: &[PathBuf],
+        args: &[&str],
+        src: &Path,
+        dst: &Path,
+    ) -> Result<Vec<PathBuf>, String> {
+        files
+            .iter()
+            .map(|file| self.compile_file(&nasm, file, &args, src, dst))
+            .collect()
     }
 
     fn get_args(&self, target: &str) -> Vec<&str> {
@@ -269,16 +296,6 @@ impl Build {
         }
 
         args
-    }
-
-    #[cfg(feature = "parallel")]
-    fn make_iter(&self) -> rayon::slice::Iter<PathBuf> {
-        self.files.par_iter()
-    }
-
-    #[cfg(not(feature = "parallel"))]
-    fn make_iter(&self) -> std::slice::Iter<'_, PathBuf> {
-        self.files.iter()
     }
 
     fn compile_file(
@@ -471,7 +488,7 @@ fn test_parse_nasm_version() {
 fn test_parse_triple() {
     let triple = "x86_64-unknown-linux-gnux32";
     assert_eq!(parse_triple(&triple), ("-felfx32", "-gdwarf"));
-    
+
     let triple = "x86_64-unknown-linux";
     assert_eq!(parse_triple(&triple), ("-felf64", "-gdwarf"));
 }
