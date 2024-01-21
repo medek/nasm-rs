@@ -1,11 +1,14 @@
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
-
 use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::Stdio;
+
+#[cfg(feature = "parallel")]
+use std::sync::OnceLock;
+
+#[cfg(feature = "parallel")]
+static JOBSERVER: OnceLock<jobserver::Client> = OnceLock::new();
 
 fn x86_triple(os: &str) -> (&'static str, &'static str) {
     match os {
@@ -251,9 +254,89 @@ impl Build {
         );
         let dst = &self.get_out_dir();
 
-        self.make_iter()
-            .map(|file| self.compile_file(&nasm, file.as_ref(), &args, src, dst))
-            .collect::<Result<Vec<_>, String>>()
+        self.compile_objects_inner(&nasm, &self.files, &args, src, dst)
+    }
+
+    #[cfg(feature = "parallel")]
+    fn compile_objects_inner(
+        &self,
+        nasm: &Path,
+        files: &[PathBuf],
+        args: &[&str],
+        src: &Path,
+        dst: &Path,
+    ) -> Result<Vec<PathBuf>, String> {
+        use jobserver::Client;
+        use std::panic;
+
+        let jobserver = JOBSERVER.get_or_init(|| {
+            // Try getting a jobserver from the environment (cargo, make, ...)
+            unsafe { Client::from_env() }.unwrap_or_else(|| {
+                // If that fails, try to create our own jobserver based on NUM_JOBS
+                let job_limit: usize = match env::var("NUM_JOBS").map(|s| s.parse()) {
+                    Ok(Ok(limit)) => limit,
+                    _ => {
+                        eprintln!("warn: NUM_JOBS is not set or could not be parsed. Defaulting to 1");
+                        1
+                    }
+                };
+
+                // Reserve a job token for this process so the behavior
+                // is consistent with external job servers.
+                let client = Client::new(job_limit).expect("Failed to create a job server");
+                client.acquire_raw().expect("Failed to acquire initial job token");
+                client
+            })
+        });
+
+        // Release the implicit job token for this process while NASM is running.
+        // Without this, the maximum number of NASM processes would be (NUM_JOBS - 1).
+        // This would mean that a build process with NUM_JOBS=1 would have
+        // no tokens left for NASM to run, causing the build to stall.
+        jobserver.release_raw().unwrap();
+
+        let thread_results: Vec<_> = std::thread::scope(|s| {
+            let mut handles = Vec::with_capacity(files.len());
+
+            for file in files {
+                // Wait for a job token before starting the build
+                let token = jobserver.acquire().expect("Failed to acquire job token");
+                let handle = s.spawn(move || {
+                    let result = self.compile_file(nasm, file, args, src, dst);
+                    // Release the token ASAP so that another job can start
+                    drop(token);
+                    result
+                });
+                handles.push(handle);
+            }
+
+            // Collect results from all threads without handling panics
+            handles.into_iter().map(|h| h.join()).collect()
+        });
+
+        // Reacquire the implicit job token (see comments above for more info).
+        jobserver.acquire_raw().expect("Failed to reacquire implicit token");
+
+        // Only handle thread panics after all threads have stopped
+        thread_results
+            .into_iter()
+            .map(|thread_res| thread_res.unwrap_or_else(|e| panic::resume_unwind(e)))
+            .collect()
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    fn compile_objects_inner(
+        &self,
+        nasm: &Path,
+        files: &[PathBuf],
+        args: &[&str],
+        src: &Path,
+        dst: &Path,
+    ) -> Result<Vec<PathBuf>, String> {
+        files
+            .iter()
+            .map(|file| self.compile_file(&nasm, file, &args, src, dst))
+            .collect()
     }
 
     fn get_args(&self, target: &str) -> Vec<&str> {
@@ -269,16 +352,6 @@ impl Build {
         }
 
         args
-    }
-
-    #[cfg(feature = "parallel")]
-    fn make_iter(&self) -> rayon::slice::Iter<PathBuf> {
-        self.files.par_iter()
-    }
-
-    #[cfg(not(feature = "parallel"))]
-    fn make_iter(&self) -> std::slice::Iter<'_, PathBuf> {
-        self.files.iter()
     }
 
     fn compile_file(
@@ -471,8 +544,7 @@ fn test_parse_nasm_version() {
 fn test_parse_triple() {
     let triple = "x86_64-unknown-linux-gnux32";
     assert_eq!(parse_triple(&triple), ("-felfx32", "-gdwarf"));
-    
+
     let triple = "x86_64-unknown-linux";
     assert_eq!(parse_triple(&triple), ("-felf64", "-gdwarf"));
 }
-

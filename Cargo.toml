@@ -16,9 +16,9 @@ repository = "https://github.com/medek/nasm-rs"
 version = "0.2.5"
 edition = "2018"
 
-[dependencies.rayon]
+[dependencies.jobserver]
 optional = true
-version = "1.4"
+version = "0.1"
 
 [features]
-parallel = ["rayon"]
+parallel = ["jobserver"]
