@@ -272,11 +272,14 @@ impl Build {
         let jobserver = JOBSERVER.get_or_init(|| {
             // Try getting a jobserver from the environment (cargo, make, ...)
             unsafe { Client::from_env() }.unwrap_or_else(|| {
-                // If that fails, create our own jobserver based on NUM_JOBS
-                let job_limit: usize = env::var("NUM_JOBS")
-                    .expect("NUM_JOBS must be set")
-                    .parse()
-                    .expect("NUM_JOBS must be parsable to usize");
+                // If that fails, try to create our own jobserver based on NUM_JOBS
+                let job_limit: usize = match env::var("NUM_JOBS").map(|s| s.parse()) {
+                    Ok(Ok(limit)) => limit,
+                    _ => {
+                        eprintln!("warn: NUM_JOBS is not set or could not be parsed. Defaulting to 1");
+                        1
+                    }
+                };
 
                 // Reserve a job token for this process so the behavior
                 // is consistent with external job servers.
@@ -288,7 +291,7 @@ impl Build {
 
         // Release the implicit job token for this process while NASM is running.
         // Without this, the maximum number of NASM processes would be (NUM_JOBS - 1).
-        // This would mean that a build process with NUM_JOBS=1 would have 
+        // This would mean that a build process with NUM_JOBS=1 would have
         // no tokens left for NASM to run, causing the build to stall.
         jobserver.release_raw().unwrap();
 
@@ -545,4 +548,3 @@ fn test_parse_triple() {
     let triple = "x86_64-unknown-linux";
     assert_eq!(parse_triple(&triple), ("-felf64", "-gdwarf"));
 }
-
