@@ -7,6 +7,8 @@ use std::process::Stdio;
 #[cfg(feature = "parallel")]
 use std::sync::OnceLock;
 
+use log::info;
+
 #[cfg(feature = "parallel")]
 static JOBSERVER: OnceLock<jobserver::Client> = OnceLock::new();
 
@@ -488,7 +490,7 @@ fn get_output(cmd: &mut Command) -> Result<String, String> {
 }
 
 fn run(cmd: &mut Command) -> Result<(), String> {
-    println!("running: {:?}", cmd);
+    info!("running: {:?}", cmd);
 
     let status = match cmd
         .stdout(Stdio::inherit())
