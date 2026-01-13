@@ -99,7 +99,7 @@ impl Build {
             archiver: None,
             archiver_is_msvc: None,
             out_dir: None,
-            nasm: None,
+            nasm: env::var("NASM").ok(),
             target: None,
             min_version: (1, 0, 0),
             debug: env::var("DEBUG").ok().map_or(false, |d| d != "false"),
