@@ -94,13 +94,18 @@ pub struct Build {
 
 impl Build {
     pub fn new() -> Self {
+        let nasm = match env::var("NASM") {
+            Ok(n) => Some(PathBuf::from(n)),
+            Err(_) => None,
+        };
+
         Self {
             files: Vec::new(),
             flags: Vec::new(),
             archiver: None,
             archiver_is_msvc: None,
             out_dir: None,
-            nasm: env::var("NASM").ok(),
+            nasm,
             target: None,
             min_version: (1, 0, 0),
             debug: env::var("DEBUG").ok().map_or(false, |d| d != "false"),
