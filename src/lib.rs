@@ -3,11 +3,12 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::Stdio;
+use std::{sync, thread, time};
 
 #[cfg(feature = "parallel")]
 use std::sync::OnceLock;
 
-use log::info;
+use log::{error, info};
 
 #[cfg(feature = "parallel")]
 static JOBSERVER: OnceLock<jobserver::Client> = OnceLock::new();
@@ -44,7 +45,7 @@ fn parse_triple(trip: &str) -> (&'static str, &'static str) {
             } else {
                 x86_64_triple(parts[2])
             }
-        },
+        }
         "x86" | "i386" | "i586" | "i686" => x86_triple(parts[2]),
         _ => ("", "-g"),
     }
@@ -236,7 +237,7 @@ impl Build {
 
         let dst = &self.get_out_dir();
         let objects = self.compile_objects()?;
-        self.archive(&dst, &output, &objects[..])?;
+        self.archive(dst, &output, &objects[..])?;
 
         println!("cargo:rustc-link-search={}", dst.display());
         Ok(())
@@ -278,7 +279,7 @@ impl Build {
                 let job_limit: usize = match env::var("NUM_JOBS").map(|s| s.parse()) {
                     Ok(Ok(limit)) => limit,
                     _ => {
-                        eprintln!("warn: NUM_JOBS is not set or could not be parsed. Defaulting to 1");
+                        error!("warn: NUM_JOBS is not set or could not be parsed. Defaulting to 1");
                         1
                     }
                 };
@@ -286,44 +287,106 @@ impl Build {
                 // Reserve a job token for this process so the behavior
                 // is consistent with external job servers.
                 let client = Client::new(job_limit).expect("Failed to create a job server");
-                client.acquire_raw().expect("Failed to acquire initial job token");
+                client
+                    .acquire_raw() //acquire implicit token, do not return it.
+                    .expect("Failed to acquire initial job token");
+
                 client
             })
         });
-
-        // Release the implicit job token for this process while NASM is running.
-        // Without this, the maximum number of NASM processes would be (NUM_JOBS - 1).
-        // This would mean that a build process with NUM_JOBS=1 would have
-        // no tokens left for NASM to run, causing the build to stall.
-        jobserver.release_raw().unwrap();
+        //we'll be making use of Vec::pop() which removes the last element. Reverse the list so
+        //we're doing things in the order given (it might be important).
+        let list = sync::Arc::new(sync::RwLock::new(
+            files.iter().rev().collect::<Vec<&PathBuf>>(),
+        ));
 
         let thread_results: Vec<_> = std::thread::scope(|s| {
-            let mut handles = Vec::with_capacity(files.len());
+            let mut outputs: Vec<PathBuf> = Vec::with_capacity(files.len());
+            let helper_thread_list = sync::Arc::clone(&list);
+            let helper_thread_handle = s.spawn(move || {
+                let mut handles = Vec::with_capacity(files.len());
+                'outer: loop {
+                    // loop trying to acquire a token.
+                    let token = loop {
+                        match jobserver.try_acquire() {
+                            Ok(Some(t)) => break t,
+                            Ok(None) => {},
+                            Err(e) => if e.kind() == std::io::ErrorKind::Unsupported {
+                                error!("Non-blocking acquire from jobserver not supported on this platform.");
+                                break 'outer; //kill the helper thread and do not parellelize
+                            }
+                        }
 
-            for file in files {
-                // Wait for a job token before starting the build
-                let token = jobserver.acquire().expect("Failed to acquire job token");
-                let handle = s.spawn(move || {
-                    let result = self.compile_file(nasm, file, args, src, dst);
-                    // Release the token ASAP so that another job can start
-                    drop(token);
-                    result
-                });
-                handles.push(handle);
+                        if helper_thread_list.read().unwrap().is_empty() {
+                            //out of files. break the outer loop so thread can exit
+                            break 'outer;
+                        }
+                        // so we're not spinning like crazy
+                        thread::sleep(time::Duration::from_millis(10));
+                    };
+
+                    let file = {
+                        let mut wlist = helper_thread_list.write().unwrap();
+                        (*wlist).pop()
+                    };
+
+                    if file.is_none() {
+                        break;
+                    }
+
+                    let handle = s.spawn(move || {
+                        let result =
+                            self.compile_file(nasm, file.unwrap().as_path(), args, src, dst);
+                        // Release the token ASAP so that another job can start
+                        drop(token);
+                        result
+                    });
+                    handles.push(handle);
+                }
+                // Collect results from all threads without handling panics
+                let thread_res: Vec<_> = handles.into_iter().map(|h| h.join()).collect();
+                // Only handle thread panics after all threads have stopped
+                thread_res
+                    .into_iter()
+                    .map(|r| r.unwrap_or_else(|e| panic::resume_unwind(e)))
+                    .collect()
+            });
+
+            // From docs on jobserver behavior, the implicit token allows us to run one job without
+            // needing to talk to the job server. If number of available jobs is one, everything
+            // will be executed from here while the helper thread waits on a token that won't come.
+            loop {
+                let file = {
+                    let mut wlist = list.write().unwrap();
+                    (*wlist).pop()
+                };
+
+                if file.is_none() {
+                    break;
+                }
+                match self.compile_file(nasm, file.unwrap().as_path(), args, src, dst) {
+                    Ok(r) => outputs.push(r),
+                    Err(e) => {
+                        error!("{}", e);
+                    }
+                }
             }
 
-            // Collect results from all threads without handling panics
-            handles.into_iter().map(|h| h.join()).collect()
+            let thread_outputs: Vec<_> = helper_thread_handle
+                .join()
+                .unwrap_or_else(|e| panic::resume_unwind(e));
+
+            for out in thread_outputs {
+                match out {
+                    Ok(p) => outputs.push(p),
+                    Err(e) => {
+                        error!("{}", e)
+                    }
+                }
+            }
+            outputs
         });
-
-        // Reacquire the implicit job token (see comments above for more info).
-        jobserver.acquire_raw().expect("Failed to reacquire implicit token");
-
-        // Only handle thread panics after all threads have stopped
-        thread_results
-            .into_iter()
-            .map(|thread_res| thread_res.unwrap_or_else(|e| panic::resume_unwind(e)))
-            .collect()
+        Ok(thread_results)
     }
 
     #[cfg(not(feature = "parallel"))]
@@ -342,7 +405,7 @@ impl Build {
     }
 
     fn get_args(&self, target: &str) -> Vec<&str> {
-        let (arch_flag, debug_flag) = parse_triple(&target);
+        let (arch_flag, debug_flag) = parse_triple(target);
         let mut args = vec![arch_flag];
 
         if self.debug {
@@ -366,8 +429,8 @@ impl Build {
     ) -> Result<PathBuf, String> {
         let obj = dst.join(file.file_name().unwrap()).with_extension("o");
         let mut cmd = Command::new(nasm);
-        cmd.args(&new_args[..]);
-        std::fs::create_dir_all(&obj.parent().unwrap()).unwrap();
+        cmd.args(new_args);
+        std::fs::create_dir_all(obj.parent().unwrap()).unwrap();
 
         run(cmd.arg(src.join(file)).arg("-o").arg(&obj))?;
         Ok(obj)
@@ -545,8 +608,8 @@ fn test_parse_nasm_version() {
 #[test]
 fn test_parse_triple() {
     let triple = "x86_64-unknown-linux-gnux32";
-    assert_eq!(parse_triple(&triple), ("-felfx32", "-gdwarf"));
+    assert_eq!(parse_triple(triple), ("-felfx32", "-gdwarf"));
 
     let triple = "x86_64-unknown-linux";
-    assert_eq!(parse_triple(&triple), ("-felf64", "-gdwarf"));
+    assert_eq!(parse_triple(triple), ("-felf64", "-gdwarf"));
 }
